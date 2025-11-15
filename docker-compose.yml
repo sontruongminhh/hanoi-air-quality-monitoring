@@ -1,0 +1,163 @@
+version: '3.8'
+
+services:
+  # Zookeeper - Required for Kafka
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    hostname: zookeeper
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - kafka-network
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Kafka Broker
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    hostname: kafka
+    container_name: kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    networks:
+      - kafka-network
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  # Kafka Producer - OpenAQ Data Producer
+  producer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: air-quality-producer
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_TOPIC: air-quality-topic
+      OPENAQ_API_URL: https://api.openaq.org/v3/locations
+      OPENAQ_API_KEY: ${OPENAQ_API_KEY}
+      OPENAQ_LOCATION_ID: ${OPENAQ_LOCATION_ID}
+      OPENAQ_LIMIT: ${OPENAQ_LIMIT:-100}
+      OPENAQ_COUNTRY: ${OPENAQ_COUNTRY:-VN}
+      OPENAQ_RADIUS: ${OPENAQ_RADIUS:-25000}
+      OPENAQ_COORDINATES: ${OPENAQ_COORDINATES}
+    command: python producer.py
+    networks:
+      - kafka-network
+    restart: unless-stopped
+
+  # Kafka Consumer - Air Quality Data Consumer
+  consumer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: air-quality-consumer
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_TOPIC: air-quality-topic
+      # Postgres connection
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: aqi
+      POSTGRES_USER: aqi_user
+      POSTGRES_PASSWORD: aqi_password
+      # Email SMTP (set your real credentials via env or .env)
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      ALERT_EMAIL_TO: ${ALERT_EMAIL_TO}
+      ALERT_EMAIL_FROM: ${ALERT_EMAIL_FROM:-alerts@example.com}
+      # Thresholds (µg/m³)
+      THRESHOLD_PM25: ${THRESHOLD_PM25:-15}
+      THRESHOLD_PM10: ${THRESHOLD_PM10:-45}
+      THRESHOLD_NO2: ${THRESHOLD_NO2:-25}
+      THRESHOLD_O3: ${THRESHOLD_O3:-100}
+      THRESHOLD_CO: ${THRESHOLD_CO:-4000}
+      THRESHOLD_SO2: ${THRESHOLD_SO2:-40}
+    command: python consumer.py
+    networks:
+      - kafka-network
+    restart: unless-stopped
+
+  # Kafka S3 Consumer - Đẩy dữ liệu lên S3 (BRONZE layer)
+  s3-consumer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: air-quality-s3-consumer
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_TOPIC: air-quality-topic
+      # S3 Configuration
+      S3_BUCKET: ${S3_BUCKET}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL}
+      S3_PREFIX: ${S3_PREFIX:-bronze/openaq/raw}
+      S3_BATCH_SIZE: ${S3_BATCH_SIZE:-100}
+      S3_BATCH_TIMEOUT: ${S3_BATCH_TIMEOUT:-300}
+    command: python s3_consumer.py
+    networks:
+      - kafka-network
+    restart: unless-stopped
+
+  # Postgres for storing AQI data and alert state
+  postgres:
+    image: postgres:15-alpine
+    container_name: aqi-postgres
+    environment:
+      POSTGRES_DB: aqi
+      POSTGRES_USER: aqi_user
+      POSTGRES_PASSWORD: aqi_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d
+    networks:
+      - kafka-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aqi_user -d aqi"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  kafka-network:
+    driver: bridge
+volumes:
+  pgdata:
