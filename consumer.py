@@ -6,12 +6,11 @@ Kafka Consumer - Nhận dữ liệu chất lượng không khí từ Kafka
 import json
 import os
 from datetime import datetime, timezone
-from email.mime.text import MIMEText
-import smtplib
 import time
 import psycopg2
 from kafka import KafkaConsumer
 from dotenv import load_dotenv
+from util_email import send_aqi_alert_email, send_aqi_alert_email_summary, calculate_aqi_from_value
 
 # Load environment variables
 load_dotenv()
@@ -91,15 +90,29 @@ class AirQualityConsumer:
 
     def _normalize_param(self, raw_param: str, display: str) -> str:
         text = (raw_param or display or '').strip().lower()
-        replacements = {
-            'pm2.5': 'pm25', 'pm 2.5': 'pm25', 'pm_2_5': 'pm25',
-            'pm10': 'pm10', 'pm 10': 'pm10',
-            'nitrogen dioxide': 'no2', 'no2': 'no2',
-            'ozone': 'o3', 'o3': 'o3',
-            'carbon monoxide': 'co', 'co': 'co',
-            'sulfur dioxide': 'so2', 'so2': 'so2'
-        }
-        return replacements.get(text, text)
+        # Loại bỏ các từ thừa như "mass", "concentration", etc.
+        text = text.replace(' mass', '').replace(' concentration', '').replace('_', ' ').replace('.', ' ').strip()
+        
+        # Mapping các parameter - kiểm tra chính xác trước
+        if text == 'pm25' or text == 'pm2.5' or text == 'pm 2.5':
+            return 'pm25'
+        elif text == 'pm10' or text == 'pm 10':
+            return 'pm10'
+        elif text == 'no2' or 'nitrogen dioxide' in text:
+            return 'no2'
+        elif text == 'o3' or 'ozone' in text:
+            return 'o3'
+        elif text == 'co' or 'carbon monoxide' in text:
+            return 'co'
+        elif text == 'so2' or 'sulfur dioxide' in text:
+            return 'so2'
+        
+        # Fallback: trả về text đã clean (loại bỏ khoảng trắng)
+        cleaned = text.replace(' ', '').replace('.', '')
+        # Nếu cleaned là một trong các giá trị hợp lệ, trả về
+        if cleaned in ['pm25', 'pm10', 'no2', 'o3', 'co', 'so2']:
+            return cleaned
+        return cleaned
 
     def _parse_utc(self, dt_str: str) -> datetime:
         if not dt_str:
@@ -112,24 +125,43 @@ class AirQualityConsumer:
         except Exception:
             return None
 
-    def _should_alert_and_record(self, cursor, row: dict) -> bool:
-        # Dedup strict by timestamp: if any row exists for this key, skip alert
+    def _evaluate_reading(self, cursor, row: dict):
+        """
+        Kiểm tra timestamp trước đó để quyết định việc gửi cảnh báo
+
+        Returns:
+            tuple(bool, bool, datetime | None):
+                - is_newer: measurement_time có mới hơn lần trước không
+                - should_alert: có nên gửi cảnh báo (chỉ khi mới và vượt ngưỡng)
+                - prev_time: measurement_time gần nhất trước đó (nếu có)
+        """
         cursor.execute(
             """
-            SELECT 1 FROM aqi_readings
-            WHERE location_id = %s AND parameter = %s AND measurement_time = %s
+            SELECT measurement_time
+            FROM aqi_readings
+            WHERE location_id = %s AND parameter = %s
+            ORDER BY measurement_time DESC
             LIMIT 1
             """,
-            (row['location_id'], row['parameter'], row['measurement_time']),
+            (row['location_id'], row['parameter']),
         )
-        if cursor.fetchone():
-            return False
-        threshold = self.thresholds.get(row['parameter'])
-        if threshold is None or row['value'] is None:
-            return False
-        return float(row['value']) > float(threshold)
+        prev = cursor.fetchone()
+        prev_time = prev[0] if prev else None
 
-    def _insert_reading(self, cursor, row: dict, alerted: bool):
+        measurement_time = row['measurement_time']
+        is_newer = not prev_time or measurement_time > prev_time
+
+        threshold = self.thresholds.get(row['parameter'])
+        value = row['value']
+
+        if threshold is None or value is None:
+            return is_newer, False, prev_time
+
+        exceeds = float(value) > float(threshold)
+        should_alert = is_newer and exceeds
+        return is_newer, should_alert, prev_time
+
+    def _insert_reading(self, cursor, row: dict, alerted: bool) -> bool:
         cursor.execute(
             """
             INSERT INTO aqi_readings (
@@ -147,20 +179,33 @@ class AirQualityConsumer:
             """,
             {**row, 'alerted': alerted},
         )
+        return cursor.rowcount > 0
 
-    def _send_email(self, subject: str, body: str):
-        if not (self.smtp_host and self.smtp_user and self.smtp_password and self.alert_email_to):
-            print("⚠ Bỏ qua gửi email: chưa cấu hình SMTP/EMAIL env vars")
-            return
-        msg = MIMEText(body, _charset='utf-8')
-        msg['Subject'] = subject
-        msg['From'] = self.alert_email_from
-        msg['To'] = self.alert_email_to
-        with smtplib.SMTP(self.smtp_host, self.smtp_port) as server:
-            server.starttls()
-            server.login(self.smtp_user, self.smtp_password)
-            server.sendmail(self.alert_email_from, [self.alert_email_to], msg.as_string())
-        print("✓ Đã gửi email cảnh báo")
+    def _send_email(self, subject: str, param_name: str, value: float, unit: str, 
+                     threshold: float, location_name: str, locality: str, country: str,
+                     latitude: float, longitude: float, measurement_time: datetime):
+        """
+        Gửi email cảnh báo - wrapper gọi hàm từ util_email.py
+        """
+        send_aqi_alert_email(
+            smtp_host=self.smtp_host,
+            smtp_port=self.smtp_port,
+            smtp_user=self.smtp_user,
+            smtp_password=self.smtp_password,
+            alert_email_from=self.alert_email_from,
+            alert_email_to=self.alert_email_to,
+            subject=subject,
+            param_name=param_name,
+            value=value,
+            unit=unit,
+            threshold=threshold,
+            location_name=location_name,
+            locality=locality,
+            country=country,
+            latitude=latitude,
+            longitude=longitude,
+            measurement_time=measurement_time
+        )
 
     def format_sensor_data(self, sensors):
         """
@@ -225,6 +270,9 @@ class AirQualityConsumer:
 
                     sensors = data.get('sensors', []) or []
                     inserted_count = 0
+                    # Danh sách các sensor vượt ngưỡng để gửi email tổng hợp
+                    alert_sensors = []  # List of (sensor_info, aqi_value)
+                    
                     for sensor in sensors:
                         value = sensor.get('latest_value')
                         unit = sensor.get('unit')
@@ -243,22 +291,76 @@ class AirQualityConsumer:
                         }
 
                         try:
-                            should_alert = self._should_alert_and_record(cursor, row)
-                            self._insert_reading(cursor, row, alerted=should_alert)
-                            inserted_count += 1
+                            is_newer, should_alert, prev_time = self._evaluate_reading(cursor, row)
+                            
+                            # Debug logging
+                            threshold = self.thresholds.get(param_norm)
+                            value_float = float(value) if value is not None else None
+                            exceeds = threshold is not None and value_float is not None and value_float > float(threshold)
+                            print(f"  → Sensor {param_norm}: value={value_float}, threshold={threshold}, exceeds={exceeds}, is_newer={is_newer}, should_alert={should_alert}")
+                            
+                            inserted = self._insert_reading(cursor, row, alerted=should_alert)
+                            if inserted:
+                                inserted_count += 1
+                            else:
+                                print(f"  → Bỏ qua ghi DB cho sensor {param_norm}: đã tồn tại bản ghi trùng")
+
+                            if not is_newer:
+                                prev_str = prev_time.isoformat() if prev_time else 'N/A'
+                                print(f"  → Sensor {param_norm}: measurement_time {measurement_time.isoformat()} "
+                                      f"không mới hơn lần trước ({prev_str}), chỉ lưu lịch sử")
+
                             if should_alert:
-                                threshold = self.thresholds.get(param_norm)
-                                subject = f"AQI Alert: {param_norm.upper()} vượt ngưỡng tại {base['location_name']}"
-                                body = (
-                                    f"Thông số: {param_norm.upper()}\n"
-                                    f"Giá trị: {value} {unit} (ngưỡng: {threshold})\n"
-                                    f"Thời gian (UTC): {measurement_time.isoformat()}\n"
-                                    f"Vị trí: {base['location_name']} ({base['locality']}, {base['country']})\n"
-                                    f"Tọa độ: {base['latitude']}, {base['longitude']}\n"
-                                )
-                                self._send_email(subject, body)
+                                # Tính AQI để tìm sensor có mức độ nguy hiểm cao nhất
+                                param_for_aqi = param_norm
+                                aqi, aqi_level = calculate_aqi_from_value(value_float, param_for_aqi)
+                                alert_sensors.append({
+                                    'sensor': sensor,
+                                    'param_norm': param_norm,
+                                    'param_display': sensor.get('parameter_display', param_norm.upper()),
+                                    'value': value_float,
+                                    'unit': unit or '',
+                                    'threshold': float(threshold),
+                                    'aqi': aqi,
+                                    'aqi_level': aqi_level,
+                                    'measurement_time': measurement_time
+                                })
+                                print(f"  → ⚠️ PHÁT HIỆN VƯỢT NGƯỠNG! {param_norm}: {value_float} {unit} (AQI={aqi})")
                         except Exception as e:
                             print(f"✗ Lỗi khi ghi DB cho sensor {param_norm}: {e}")
+                            import traceback
+                            traceback.print_exc()
+
+                    # Gửi 1 email tổng hợp cho tất cả các sensor vượt ngưỡng (nếu có)
+                    if alert_sensors:
+                        # Sắp xếp theo AQI giảm dần để hiển thị thông số nguy hiểm nhất trước
+                        alert_sensors.sort(key=lambda x: x['aqi'], reverse=True)
+                        
+                        # Lấy measurement_time từ sensor đầu tiên (hoặc từ data chung)
+                        measurement_time_for_email = alert_sensors[0]['measurement_time']
+                        if not measurement_time_for_email:
+                            measurement_time_for_email = self._parse_utc(data.get('timestamp')) or datetime.now(timezone.utc)
+                        
+                        num_exceeded = len(alert_sensors)
+                        max_aqi = alert_sensors[0]['aqi']
+                        
+                        print(f"  → ⚠️ GỬI EMAIL CẢNH BÁO TỔNG HỢP: {num_exceeded} thông số vượt ngưỡng, AQI cao nhất = {max_aqi}")
+                        try:
+                            send_aqi_alert_email_summary(
+                                alert_email_to=self.alert_email_to,
+                                location_name=base['location_name'],
+                                locality=base['locality'] or 'N/A',
+                                country=base['country'] or 'N/A',
+                                latitude=base['latitude'] or 0.0,
+                                longitude=base['longitude'] or 0.0,
+                                measurement_time=measurement_time_for_email,
+                                alert_sensors=alert_sensors
+                            )
+                            print(f"  → ✓ Đã gửi email cảnh báo tổng hợp ({num_exceeded} thông số vượt ngưỡng)")
+                        except Exception as email_error:
+                            print(f"  → ✗ Lỗi khi gửi email: {email_error}")
+                            import traceback
+                            traceback.print_exc()
 
                     print(f"  → Đã ghi {inserted_count} sensors vào Postgres")
 

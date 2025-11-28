@@ -18,6 +18,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY producer.py .
 COPY consumer.py .
 COPY s3_consumer.py .
+COPY util_email.py .
 COPY .env .
 
 # Set environment variables

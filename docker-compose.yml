@@ -90,20 +90,18 @@ services:
       POSTGRES_DB: aqi
       POSTGRES_USER: aqi_user
       POSTGRES_PASSWORD: aqi_password
-      # Email SMTP (set your real credentials via env or .env)
-      SMTP_HOST: ${SMTP_HOST}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_USER: ${SMTP_USER}
-      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      # Email Configuration
       ALERT_EMAIL_TO: ${ALERT_EMAIL_TO}
-      ALERT_EMAIL_FROM: ${ALERT_EMAIL_FROM:-alerts@example.com}
-      # Thresholds (µg/m³)
-      THRESHOLD_PM25: ${THRESHOLD_PM25:-15}
-      THRESHOLD_PM10: ${THRESHOLD_PM10:-45}
-      THRESHOLD_NO2: ${THRESHOLD_NO2:-25}
-      THRESHOLD_O3: ${THRESHOLD_O3:-100}
-      THRESHOLD_CO: ${THRESHOLD_CO:-4000}
-      THRESHOLD_SO2: ${THRESHOLD_SO2:-40}
+      # Gmail Configuration (for util_email.py)
+      GMAIL_USER: ${GMAIL_USER}
+      GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD}
+      # Thresholds (µg/m³) - Giá trị test (hạ thấp để dễ trigger cảnh báo)
+      THRESHOLD_PM25: 5
+      THRESHOLD_PM10: 10
+      THRESHOLD_NO2: 5
+      THRESHOLD_O3: 20
+      THRESHOLD_CO: 500
+      THRESHOLD_SO2: 5
     command: python consumer.py
     networks:
       - kafka-network
@@ -156,8 +154,30 @@ services:
       timeout: 5s
       retries: 5
 
+  # Grafana for data visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: aqi-grafana
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_INSTALL_PLUGINS: grafana-clock-panel,grafana-simple-json-datasource
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+    networks:
+      - kafka-network
+    restart: unless-stopped
+
 networks:
   kafka-network:
     driver: bridge
 volumes:
   pgdata:
+  grafana-data:

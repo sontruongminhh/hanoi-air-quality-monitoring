@@ -1,0 +1,490 @@
+{
+  "dashboard": {
+    "title": "Air Quality Monitoring Dashboard",
+    "tags": ["air-quality", "aqi"],
+    "timezone": "browser",
+    "schemaVersion": 27,
+    "version": 1,
+    "refresh": "30s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Tất cả các chỉ số chất lượng không khí",
+        "type": "timeseries",
+        "gridPos": {"h": 10, "w": 24, "x": 0, "y": 0},
+        "targets": [
+          {
+            "datasource": {"type": "postgres", "uid": "PostgreSQL"},
+            "editorMode": "code",
+            "format": "time_series",
+            "rawQuery": true,
+            "rawSql": "SELECT\n  measurement_time AS \"time\",\n  value AS \"PM2.5\"\nFROM aqi_readings\nWHERE\n  $__timeFilter(measurement_time)\n  AND parameter = 'pm25'\nORDER BY measurement_time;",
+            "refId": "A"
+          },
+          {
+            "datasource": {"type": "postgres", "uid": "PostgreSQL"},
+            "editorMode": "code",
+            "format": "time_series",
+            "rawQuery": true,
+            "rawSql": "SELECT\n  measurement_time AS \"time\",\n  value AS \"PM10\"\nFROM aqi_readings\nWHERE\n  $__timeFilter(measurement_time)\n  AND parameter = 'pm10'\nORDER BY measurement_time;",
+            "refId": "B"
+          },
+          {
+            "datasource": {"type": "postgres", "uid": "PostgreSQL"},
+            "editorMode": "code",
+            "format": "time_series",
+            "rawQuery": true,
+            "rawSql": "SELECT\n  measurement_time AS \"time\",\n  value AS \"CO\"\nFROM aqi_readings\nWHERE\n  $__timeFilter(measurement_time)\n  AND parameter = 'co'\nORDER BY measurement_time;",
+            "refId": "C"
+          },
+          {
+            "datasource": {"type": "postgres", "uid": "PostgreSQL"},
+            "editorMode": "code",
+            "format": "time_series",
+            "rawQuery": true,
+            "rawSql": "SELECT\n  measurement_time AS \"time\",\n  value AS \"NO₂\"\nFROM aqi_readings\nWHERE\n  $__timeFilter(measurement_time)\n  AND parameter = 'no2'\nORDER BY measurement_time;",
+            "refId": "D"
+          },
+          {
+            "datasource": {"type": "postgres", "uid": "PostgreSQL"},
+            "editorMode": "code",
+            "format": "time_series",
+            "rawQuery": true,
+            "rawSql": "SELECT\n  measurement_time AS \"time\",\n  value AS \"O₃\"\nFROM aqi_readings\nWHERE\n  $__timeFilter(measurement_time)\n  AND parameter = 'o3'\nORDER BY measurement_time;",
+            "refId": "E"
+          },
+          {
+            "datasource": {"type": "postgres", "uid": "PostgreSQL"},
+            "editorMode": "code",
+            "format": "time_series",
+            "rawQuery": true,
+            "rawSql": "SELECT\n  measurement_time AS \"time\",\n  value AS \"SO₂\"\nFROM aqi_readings\nWHERE\n  $__timeFilter(measurement_time)\n  AND parameter = 'so2'\nORDER BY measurement_time;",
+            "refId": "F"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "palette-classic"},
+            "custom": {
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "gradientMode": "none",
+              "hideFrom": {"tooltip": false, "viz": false, "legend": false},
+              "lineInterpolation": "linear",
+              "lineWidth": 2,
+              "pointSize": 5,
+              "scaleDistribution": {"type": "linear"},
+              "showPoints": "never",
+              "spanNulls": false
+            },
+            "mappings": [],
+            "unit": "µg/m³"
+          },
+          "overrides": [
+            {
+              "matcher": {"id": "byName", "options": "PM2.5"},
+              "properties": [
+                {"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}}
+              ]
+            },
+            {
+              "matcher": {"id": "byName", "options": "PM10"},
+              "properties": [
+                {"id": "color", "value": {"fixedColor": "orange", "mode": "fixed"}}
+              ]
+            },
+            {
+              "matcher": {"id": "byName", "options": "CO"},
+              "properties": [
+                {"id": "color", "value": {"fixedColor": "purple", "mode": "fixed"}}
+              ]
+            },
+            {
+              "matcher": {"id": "byName", "options": "NO₂"},
+              "properties": [
+                {"id": "color", "value": {"fixedColor": "blue", "mode": "fixed"}}
+              ]
+            },
+            {
+              "matcher": {"id": "byName", "options": "O₃"},
+              "properties": [
+                {"id": "color", "value": {"fixedColor": "green", "mode": "fixed"}}
+              ]
+            },
+            {
+              "matcher": {"id": "byName", "options": "SO₂"},
+              "properties": [
+                {"id": "color", "value": {"fixedColor": "yellow", "mode": "fixed"}}
+              ]
+            }
+          ]
+        },
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "multi"
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "PM2.5",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 10},
+        "targets": [
+          {
+            "datasource": {"type": "postgres", "uid": "PostgreSQL"},
+            "editorMode": "code",
+            "format": "time_series",
+            "rawQuery": true,
+            "rawSql": "SELECT\n  measurement_time AS \"time\",\n  value\nFROM aqi_readings\nWHERE\n  $__timeFilter(measurement_time)\n  AND parameter = 'pm25'\nORDER BY measurement_time;",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "fixed", "fixedColor": "red"},
+            "custom": {
+              "drawStyle": "line",
+              "lineInterpolation": "linear",
+              "lineWidth": 2,
+              "fillOpacity": 20,
+              "showPoints": "never"
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 12},
+                {"color": "orange", "value": 35},
+                {"color": "red", "value": 55}
+              ]
+            },
+            "unit": "µg/m³"
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "PM10",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 10},
+        "targets": [
+          {
+            "datasource": {"type": "postgres", "uid": "PostgreSQL"},
+            "editorMode": "code",
+            "format": "time_series",
+            "rawQuery": true,
+            "rawSql": "SELECT\n  measurement_time AS \"time\",\n  value\nFROM aqi_readings\nWHERE\n  $__timeFilter(measurement_time)\n  AND parameter = 'pm10'\nORDER BY measurement_time;",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "fixed", "fixedColor": "orange"},
+            "custom": {
+              "drawStyle": "line",
+              "lineInterpolation": "linear",
+              "lineWidth": 2,
+              "fillOpacity": 20,
+              "showPoints": "never"
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 54},
+                {"color": "orange", "value": 154},
+                {"color": "red", "value": 254}
+              ]
+            },
+            "unit": "µg/m³"
+          }
+        }
+      },
+      {
+        "id": 4,
+        "title": "CO (Carbon Monoxide)",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 18},
+        "targets": [
+          {
+            "datasource": {"type": "postgres", "uid": "PostgreSQL"},
+            "editorMode": "code",
+            "format": "time_series",
+            "rawQuery": true,
+            "rawSql": "SELECT\n  measurement_time AS \"time\",\n  value\nFROM aqi_readings\nWHERE\n  $__timeFilter(measurement_time)\n  AND parameter = 'co'\nORDER BY measurement_time;",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "fixed", "fixedColor": "purple"},
+            "custom": {
+              "drawStyle": "line",
+              "lineInterpolation": "linear",
+              "lineWidth": 2,
+              "fillOpacity": 20,
+              "showPoints": "never"
+            },
+            "unit": "µg/m³"
+          }
+        }
+      },
+      {
+        "id": 5,
+        "title": "NO₂ (Nitrogen Dioxide)",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 18},
+        "targets": [
+          {
+            "datasource": {"type": "postgres", "uid": "PostgreSQL"},
+            "editorMode": "code",
+            "format": "time_series",
+            "rawQuery": true,
+            "rawSql": "SELECT\n  measurement_time AS \"time\",\n  value\nFROM aqi_readings\nWHERE\n  $__timeFilter(measurement_time)\n  AND parameter = 'no2'\nORDER BY measurement_time;",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "fixed", "fixedColor": "blue"},
+            "custom": {
+              "drawStyle": "line",
+              "lineInterpolation": "linear",
+              "lineWidth": 2,
+              "fillOpacity": 20,
+              "showPoints": "never"
+            },
+            "unit": "µg/m³"
+          }
+        }
+      },
+      {
+        "id": 6,
+        "title": "O₃ (Ozone)",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 26},
+        "targets": [
+          {
+            "datasource": {"type": "postgres", "uid": "PostgreSQL"},
+            "editorMode": "code",
+            "format": "time_series",
+            "rawQuery": true,
+            "rawSql": "SELECT\n  measurement_time AS \"time\",\n  value\nFROM aqi_readings\nWHERE\n  $__timeFilter(measurement_time)\n  AND parameter = 'o3'\nORDER BY measurement_time;",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "fixed", "fixedColor": "green"},
+            "custom": {
+              "drawStyle": "line",
+              "lineInterpolation": "linear",
+              "lineWidth": 2,
+              "fillOpacity": 20,
+              "showPoints": "never"
+            },
+            "unit": "µg/m³"
+          }
+        }
+      },
+      {
+        "id": 7,
+        "title": "SO₂ (Sulfur Dioxide)",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 26},
+        "targets": [
+          {
+            "datasource": {"type": "postgres", "uid": "PostgreSQL"},
+            "editorMode": "code",
+            "format": "time_series",
+            "rawQuery": true,
+            "rawSql": "SELECT\n  measurement_time AS \"time\",\n  value\nFROM aqi_readings\nWHERE\n  $__timeFilter(measurement_time)\n  AND parameter = 'so2'\nORDER BY measurement_time;",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "fixed", "fixedColor": "yellow"},
+            "custom": {
+              "drawStyle": "line",
+              "lineInterpolation": "linear",
+              "lineWidth": 2,
+              "fillOpacity": 20,
+              "showPoints": "never"
+            },
+            "unit": "µg/m³"
+          }
+        }
+      },
+      {
+        "id": 8,
+        "title": "Dữ liệu mới nhất theo thông số",
+        "type": "table",
+        "gridPos": {"h": 10, "w": 24, "x": 0, "y": 34},
+        "targets": [
+          {
+            "datasource": {"type": "postgres", "uid": "PostgreSQL"},
+            "editorMode": "code",
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT\n  location_name AS \"Địa điểm\",\n  parameter AS \"Thông số\",\n  value AS \"Giá trị\",\n  unit AS \"Đơn vị\",\n  measurement_time AS \"Thời gian đo\",\n  CASE WHEN alerted THEN 'Có' ELSE 'Không' END AS \"Đã cảnh báo\"\nFROM aqi_readings\nWHERE\n  measurement_time > NOW() - INTERVAL '24 hours'\nORDER BY measurement_time DESC\nLIMIT 100;",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "displayMode": "auto"
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {"id": "byName", "options": "Đã cảnh báo"},
+              "properties": [
+                {
+                  "id": "custom.cellOptions",
+                  "value": {
+                    "type": "colored-background",
+                    "mode": "gradient"
+                  }
+                },
+                {
+                  "id": "thresholds",
+                  "value": {
+                    "mode": "absolute",
+                    "steps": [
+                      {"color": "green", "value": null},
+                      {"color": "red", "value": 0}
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "id": 9,
+        "title": "Tổng số cảnh báo",
+        "type": "stat",
+        "gridPos": {"h": 6, "w": 8, "x": 0, "y": 44},
+        "targets": [
+          {
+            "datasource": {"type": "postgres", "uid": "PostgreSQL"},
+            "editorMode": "code",
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT COUNT(*) as count FROM aqi_readings WHERE alerted = true AND measurement_time > NOW() - INTERVAL '24 hours';",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 1},
+                {"color": "red", "value": 5}
+              ]
+            },
+            "unit": "short"
+          }
+        },
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "orientation": "auto",
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          }
+        }
+      },
+      {
+        "id": 10,
+        "title": "Số lượng đọc dữ liệu (24h)",
+        "type": "stat",
+        "gridPos": {"h": 6, "w": 8, "x": 8, "y": 44},
+        "targets": [
+          {
+            "datasource": {"type": "postgres", "uid": "PostgreSQL"},
+            "editorMode": "code",
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT COUNT(*) as count FROM aqi_readings WHERE measurement_time > NOW() - INTERVAL '24 hours';",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "palette-classic"},
+            "unit": "short"
+          }
+        },
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "orientation": "auto",
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          }
+        }
+      },
+      {
+        "id": 11,
+        "title": "Số thông số đang theo dõi",
+        "type": "stat",
+        "gridPos": {"h": 6, "w": 8, "x": 16, "y": 44},
+        "targets": [
+          {
+            "datasource": {"type": "postgres", "uid": "PostgreSQL"},
+            "editorMode": "code",
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT COUNT(DISTINCT parameter) as count FROM aqi_readings;",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "palette-classic"},
+            "unit": "short"
+          }
+        },
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "orientation": "auto",
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          }
+        }
+      }
+    ],
+    "time": {
+      "from": "now-6h",
+      "to": "now"
+    },
+    "timepicker": {},
+    "templating": {
+      "list": []
+    }
+  }
+}
