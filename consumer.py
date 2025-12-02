@@ -314,18 +314,31 @@ class AirQualityConsumer:
                                 # Tính AQI để tìm sensor có mức độ nguy hiểm cao nhất
                                 param_for_aqi = param_norm
                                 aqi, aqi_level = calculate_aqi_from_value(value_float, param_for_aqi)
+                                
+                                # Lấy tên hiển thị từ sensor, nếu không có thì tạo từ param_norm
+                                param_display = sensor.get('parameter_display')
+                                if not param_display:
+                                    # Tạo tên hiển thị đẹp từ param_norm
+                                    display_map = {
+                                        'pm25': 'PM2.5',
+                                        'pm10': 'PM10',
+                                        'no2': 'NO₂ mass',
+                                        'o3': 'O₃ mass',
+                                        'co': 'CO mass',
+                                        'so2': 'SO₂ mass'
+                                    }
+                                    param_display = display_map.get(param_norm, param_norm.upper())
+                                
                                 alert_sensors.append({
-                                    'sensor': sensor,
-                                    'param_norm': param_norm,
-                                    'param_display': sensor.get('parameter_display', param_norm.upper()),
+                                    'param_display': param_display,
                                     'value': value_float,
-                                    'unit': unit or '',
+                                    'unit': unit or 'µg/m³',
                                     'threshold': float(threshold),
                                     'aqi': aqi,
                                     'aqi_level': aqi_level,
                                     'measurement_time': measurement_time
                                 })
-                                print(f"  → ⚠️ PHÁT HIỆN VƯỢT NGƯỠNG! {param_norm}: {value_float} {unit} (AQI={aqi})")
+                                print(f"  → ⚠️ PHÁT HIỆN VƯỢT NGƯỠNG! {param_display}: {value_float} {unit or 'µg/m³'} (AQI={aqi})")
                         except Exception as e:
                             print(f"✗ Lỗi khi ghi DB cho sensor {param_norm}: {e}")
                             import traceback

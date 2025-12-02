@@ -5,6 +5,8 @@ load_dotenv()
 import os
 import smtplib, ssl  # Thư viện gửi mail tích hợp sẵn
 from email.message import EmailMessage  # Thư viện soạn mail
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from datetime import datetime, timezone
 
 
@@ -159,106 +161,104 @@ def send_aqi_alert_email(
         subject = f"[CẢNH BÁO AQI] {location_name} vượt ngưỡng an toàn (AQI={aqi})"
 
     # 5. Tạo nội dung HTML email cảnh báo AQI
-    html_content = f"""
-    <html>
-    <head>
-        <style>
-            .container {{
-                font-family: Arial, sans-serif;
-                line-height: 1.6;
-                padding: 20px;
-                border: 1px solid #ddd;
-                border-radius: 5px;
-                width: 90%;
-                max-width: 500px;
-                margin: 20px auto;
-                background-color: #f9f9f9;
-            }}
-            .header {{
-                font-size: 24px;
-                font-weight: bold;
-                color: #c0392b;
-                text-align: center;
-            }}
-            .aqi-value {{
-                font-size: 32px;
-                font-weight: bold;
-                color: #e74c3c;
-                text-align: center;
-                margin: 20px 0;
-                letter-spacing: 2px;
-            }}
-            .sub-header {{
-                font-size: 16px;
-                font-weight: bold;
-                text-align: center;
-                margin-bottom: 10px;
-            }}
-            .detail {{
-                font-size: 14px;
-                color: #333;
-            }}
-            .badge-level {{
-                display: inline-block;
-                padding: 4px 8px;
-                border-radius: 4px;
-                font-size: 12px;
-                font-weight: bold;
-                background-color: #f39c12;
-                color: #fff;
-            }}
-            .footer {{
-                font-size: 12px;
-                color: #888;
-                text-align: center;
-                margin-top: 20px;
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="header">CẢNH BÁO CHẤT LƯỢNG KHÔNG KHÍ</div>
-            <p class="detail">
-                Hệ thống giám sát phát hiện <b>chỉ số chất lượng không khí (AQI)</b> tại khu vực
-                <b>{location_name}</b> đã <b>vượt ngưỡng an toàn</b>.
-            </p>
+    html_content = f"""<html>
+<head>
+    <style>
+        .container {{
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            width: 90%;
+            max-width: 500px;
+            margin: 20px auto;
+            background-color: #f9f9f9;
+        }}
+        .header {{
+            font-size: 24px;
+            font-weight: bold;
+            color: #c0392b;
+            text-align: center;
+        }}
+        .aqi-value {{
+            font-size: 32px;
+            font-weight: bold;
+            color: #e74c3c;
+            text-align: center;
+            margin: 20px 0;
+            letter-spacing: 2px;
+        }}
+        .sub-header {{
+            font-size: 16px;
+            font-weight: bold;
+            text-align: center;
+            margin-bottom: 10px;
+        }}
+        .detail {{
+            font-size: 14px;
+            color: #333;
+        }}
+        .badge-level {{
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            background-color: #f39c12;
+            color: #fff;
+        }}
+        .footer {{
+            font-size: 12px;
+            color: #888;
+            text-align: center;
+            margin-top: 20px;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">CẢNH BÁO CHẤT LƯỢNG KHÔNG KHÍ</div>
+        <p class="detail">
+            Hệ thống giám sát phát hiện <b>chỉ số chất lượng không khí (AQI)</b> tại khu vực
+            <b>{location_name}</b> đã <b>vượt ngưỡng an toàn</b>.
+        </p>
 
-            <div class="sub-header">Chỉ số AQI hiện tại</div>
-            <div class="aqi-value">{aqi}</div>
-            <p style="text-align: center;">
-                Mức độ: <span class="badge-level">{aqi_level}</span>
-            </p>
+        <div class="sub-header">Chỉ số AQI hiện tại</div>
+        <div class="aqi-value">{aqi}</div>
+        <p style="text-align: center;">
+            Mức độ: <span class="badge-level">{aqi_level}</span>
+        </p>
 
-            <p class="detail">
-                <b>Thông tin chi tiết:</b><br>
-                - Thông số chính: <b>{param_name}</b><br>
-                - Giá trị đo được: <b>{value} {unit or ''}</b><br>
-                - Ngưỡng cảnh báo: <b>{threshold} {unit or ''}</b><br>
-                - Thời điểm đo: <b>{measured_at_str}</b>
-            </p>
+        <p class="detail">
+            <b>Thông tin chi tiết:</b><br>
+            - Thông số chính: <b>{param_name}</b><br>
+            - Giá trị đo được: <b>{value} {unit or ''}</b><br>
+            - Ngưỡng cảnh báo: <b>{threshold} {unit or ''}</b><br>
+            - Thời điểm đo: <b>{measured_at_str}</b>
+        </p>
 
-            <p class="detail">
-                <b>Khuyến nghị:</b><br>
-                - Hạn chế các hoạt động ngoài trời kéo dài, đặc biệt với người già, trẻ nhỏ và người có bệnh hô hấp.<br>
-                - Đeo khẩu trang phù hợp khi ra ngoài.<br>
-                - Đóng cửa sổ, sử dụng máy lọc không khí nếu có điều kiện.
-            </p>
+        <p class="detail">
+            <b>Khuyến nghị:</b><br>
+            - Hạn chế các hoạt động ngoài trời kéo dài, đặc biệt với người già, trẻ nhỏ và người có bệnh hô hấp.<br>
+            - Đeo khẩu trang phù hợp khi ra ngoài.<br>
+            - Đóng cửa sổ, sử dụng máy lọc không khí nếu có điều kiện.
+        </p>
 
-            <p class="detail">
-                Hệ thống sẽ tiếp tục theo dõi và gửi email khi chất lượng không khí cải thiện
-                hoặc có biến động bất thường.
-            </p>
+        <p class="detail">
+            Hệ thống sẽ tiếp tục theo dõi và gửi email khi chất lượng không khí cải thiện
+            hoặc có biến động bất thường.
+        </p>
 
-            <div class="footer">
-                © 2025 Hệ thống giám sát &amp; cảnh báo chất lượng không khí Hà Nội
-            </div>
+        <div class="footer">
+            © 2025 Hệ thống giám sát &amp; cảnh báo chất lượng không khí Hà Nội
         </div>
-    </body>
-    </html>
-    """
+    </div>
+</body>
+</html>"""
 
-    # 6. Tạo đối tượng EmailMessage
-    msg = EmailMessage()
+    # 6. Tạo đối tượng MIMEMultipart với alternative subtype
+    msg = MIMEMultipart('alternative')
     msg["Subject"] = subject
     msg["From"] = sender_email
     msg["To"] = alert_email_to
@@ -270,13 +270,19 @@ def send_aqi_alert_email(
     if country:
         location_info += f", {country}"
     
-    msg.set_content(
+    text_content = (
         f"CẢNH BÁO AQI tại {location_info}: AQI={aqi}, mức {aqi_level}. "
         f"Giá trị {param_name} = {value} {unit or ''}, vượt ngưỡng {threshold} {unit or ''}. "
         f"Thời điểm đo: {measured_at_str}"
     )
-    # Nội dung HTML
-    msg.add_alternative(html_content, subtype="html")
+    
+    # Tạo text part
+    text_part = MIMEText(text_content, 'plain', 'utf-8')
+    msg.attach(text_part)
+    
+    # Tạo HTML part (quan trọng: attach sau text để email client ưu tiên HTML)
+    html_part = MIMEText(html_content, 'html', 'utf-8')
+    msg.attach(html_part)
 
     # 7. Gửi email qua Gmail SMTP
     context = ssl.create_default_context()
@@ -288,7 +294,7 @@ def send_aqi_alert_email(
             server.login(sender_email, app_password)
             print("Đăng nhập thành công!")
 
-            server.send_message(msg)
+            server.sendmail(sender_email, alert_email_to, msg.as_string())
             print(f"Email cảnh báo AQI đã được gửi thành công tới {alert_email_to}")
             print(f"  → Location: {location_name}, Parameter: {param_name}, Value: {value} {unit}, AQI: {aqi}")
 
@@ -363,148 +369,151 @@ def send_aqi_alert_email_summary(
     # 5. Tạo bảng HTML cho các thông số vượt ngưỡng
     sensors_table_rows = ""
     for sensor in alert_sensors:
+        # Format giá trị và ngưỡng với số thập phân phù hợp
+        value_str = f"{sensor['value']:.2f}" if isinstance(sensor['value'], (int, float)) else str(sensor['value'])
+        threshold_str = f"{sensor['threshold']:.1f}" if isinstance(sensor['threshold'], (int, float)) else str(sensor['threshold'])
+        unit_str = sensor.get('unit', 'µg/m³')
+        
         sensors_table_rows += f"""
             <tr>
                 <td style="padding: 8px; border-bottom: 1px solid #ddd;"><b>{sensor['param_display']}</b></td>
-                <td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: center; color: #e74c3c;"><b>{sensor['value']} {sensor['unit']}</b></td>
-                <td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: center;">{sensor['threshold']} {sensor['unit']}</td>
+                <td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: center; color: #e74c3c;"><b>{value_str} {unit_str}</b></td>
+                <td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: center;">{threshold_str} {unit_str}</td>
                 <td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: center;"><b>{sensor['aqi']}</b></td>
                 <td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: center;">{sensor['aqi_level']}</td>
             </tr>
         """
     
     # 6. Tạo nội dung HTML email tổng hợp
-    html_content = f"""
-    <html>
-    <head>
-        <style>
-            .container {{
-                font-family: Arial, sans-serif;
-                line-height: 1.6;
-                padding: 20px;
-                border: 1px solid #ddd;
-                border-radius: 5px;
-                width: 90%;
-                max-width: 600px;
-                margin: 20px auto;
-                background-color: #f9f9f9;
-            }}
-            .header {{
-                font-size: 24px;
-                font-weight: bold;
-                color: #c0392b;
-                text-align: center;
-            }}
-            .aqi-value {{
-                font-size: 32px;
-                font-weight: bold;
-                color: #e74c3c;
-                text-align: center;
-                margin: 20px 0;
-                letter-spacing: 2px;
-            }}
-            .sub-header {{
-                font-size: 16px;
-                font-weight: bold;
-                text-align: center;
-                margin-bottom: 10px;
-            }}
-            .detail {{
-                font-size: 14px;
-                color: #333;
-            }}
-            .badge-level {{
-                display: inline-block;
-                padding: 4px 8px;
-                border-radius: 4px;
-                font-size: 12px;
-                font-weight: bold;
-                background-color: #f39c12;
-                color: #fff;
-            }}
-            .sensors-table {{
-                width: 100%;
-                border-collapse: collapse;
-                margin: 15px 0;
-                background-color: #fff;
-            }}
-            .sensors-table th {{
-                background-color: #34495e;
-                color: #fff;
-                padding: 10px;
-                text-align: left;
-                font-weight: bold;
-            }}
-            .footer {{
-                font-size: 12px;
-                color: #888;
-                text-align: center;
-                margin-top: 20px;
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="header">CẢNH BÁO CHẤT LƯỢNG KHÔNG KHÍ</div>
-            <p class="detail">
-                Hệ thống giám sát phát hiện <b>{num_exceeded} thông số</b> tại khu vực
-                <b>{location_name}</b> đã <b>vượt ngưỡng an toàn</b>.
-            </p>
+    html_content = f"""<html>
+<head>
+    <style>
+        .container {{
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            width: 90%;
+            max-width: 600px;
+            margin: 20px auto;
+            background-color: #f9f9f9;
+        }}
+        .header {{
+            font-size: 24px;
+            font-weight: bold;
+            color: #c0392b;
+            text-align: center;
+        }}
+        .aqi-value {{
+            font-size: 32px;
+            font-weight: bold;
+            color: #e74c3c;
+            text-align: center;
+            margin: 20px 0;
+            letter-spacing: 2px;
+        }}
+        .sub-header {{
+            font-size: 16px;
+            font-weight: bold;
+            text-align: center;
+            margin-bottom: 10px;
+        }}
+        .detail {{
+            font-size: 14px;
+            color: #333;
+        }}
+        .badge-level {{
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            background-color: #f39c12;
+            color: #fff;
+        }}
+        .sensors-table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+            background-color: #fff;
+        }}
+        .sensors-table th {{
+            background-color: #34495e;
+            color: #fff;
+            padding: 10px;
+            text-align: left;
+            font-weight: bold;
+        }}
+        .footer {{
+            font-size: 12px;
+            color: #888;
+            text-align: center;
+            margin-top: 20px;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">CẢNH BÁO CHẤT LƯỢNG KHÔNG KHÍ</div>
+        <p class="detail">
+            Hệ thống giám sát phát hiện <b>{num_exceeded} thông số</b> tại khu vực
+            <b>{location_name}</b> đã <b>vượt ngưỡng an toàn</b>.
+        </p>
 
-            <div class="sub-header">Chỉ số AQI cao nhất</div>
-            <div class="aqi-value">{max_aqi}</div>
-            <p style="text-align: center;">
-                Mức độ: <span class="badge-level">{max_aqi_level}</span>
-            </p>
+        <div class="sub-header">Chỉ số AQI cao nhất</div>
+        <div class="aqi-value">{max_aqi}</div>
+        <p style="text-align: center;">
+            Mức độ: <span class="badge-level">{max_aqi_level}</span>
+        </p>
 
-            <p class="detail">
-                <b>Danh sách các thông số vượt ngưỡng:</b>
-            </p>
-            <table class="sensors-table">
-                <thead>
-                    <tr>
-                        <th>Thông số</th>
-                        <th style="text-align: center;">Giá trị đo được</th>
-                        <th style="text-align: center;">Ngưỡng</th>
-                        <th style="text-align: center;">AQI</th>
-                        <th style="text-align: center;">Mức độ</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {sensors_table_rows}
-                </tbody>
-            </table>
+        <p class="detail">
+            <b>Danh sách các thông số vượt ngưỡng:</b>
+        </p>
+        <table class="sensors-table">
+            <thead>
+                <tr>
+                    <th>Thông số</th>
+                    <th style="text-align: center;">Giá trị đo được</th>
+                    <th style="text-align: center;">Ngưỡng</th>
+                    <th style="text-align: center;">AQI</th>
+                    <th style="text-align: center;">Mức độ</th>
+                </tr>
+            </thead>
+            <tbody>
+                {sensors_table_rows}
+            </tbody>
+        </table>
 
-            <p class="detail">
-                <b>Thông tin địa điểm:</b><br>
-                - Địa điểm: <b>{location_name}</b><br>
-                {f"- Địa phương: <b>{locality}</b><br>" if locality else ""}
-                {f"- Quốc gia: <b>{country}</b><br>" if country else ""}
-                - Thời điểm đo: <b>{measured_at_str}</b>
-            </p>
+        <p class="detail">
+            <b>Thông tin địa điểm:</b><br>
+            - Địa điểm: <b>{location_name}</b><br>
+            {f"- Địa phương: <b>{locality}</b><br>" if locality else ""}
+            {f"- Quốc gia: <b>{country}</b><br>" if country else ""}
+            - Thời điểm đo: <b>{measured_at_str}</b>
+        </p>
 
-            <p class="detail">
-                <b>Khuyến nghị:</b><br>
-                - Hạn chế các hoạt động ngoài trời kéo dài, đặc biệt với người già, trẻ nhỏ và người có bệnh hô hấp.<br>
-                - Đeo khẩu trang phù hợp khi ra ngoài.<br>
-                - Đóng cửa sổ, sử dụng máy lọc không khí nếu có điều kiện.
-            </p>
+        <p class="detail">
+            <b>Khuyến nghị:</b><br>
+            - Hạn chế các hoạt động ngoài trời kéo dài, đặc biệt với người già, trẻ nhỏ và người có bệnh hô hấp.<br>
+            - Đeo khẩu trang phù hợp khi ra ngoài.<br>
+            - Đóng cửa sổ, sử dụng máy lọc không khí nếu có điều kiện.
+        </p>
 
-            <p class="detail">
-                Hệ thống sẽ tiếp tục theo dõi và gửi email khi chất lượng không khí cải thiện
-                hoặc có biến động bất thường.
-            </p>
+        <p class="detail">
+            Hệ thống sẽ tiếp tục theo dõi và gửi email khi chất lượng không khí cải thiện
+            hoặc có biến động bất thường.
+        </p>
 
-            <div class="footer">
-                © 2025 Hệ thống giám sát &amp; cảnh báo chất lượng không khí Hà Nội
-            </div>
+        <div class="footer">
+            © 2025 Hệ thống giám sát &amp; cảnh báo chất lượng không khí Hà Nội
         </div>
-    </body>
-    </html>
-    """
+    </div>
+</body>
+</html>"""
 
-    # 7. Tạo đối tượng EmailMessage
-    msg = EmailMessage()
+    # 7. Tạo đối tượng MIMEMultipart với alternative subtype
+    msg = MIMEMultipart('alternative')
     msg["Subject"] = subject
     msg["From"] = sender_email
     msg["To"] = alert_email_to
@@ -521,13 +530,19 @@ def send_aqi_alert_email_summary(
         for s in alert_sensors
     ])
     
-    msg.set_content(
+    text_content = (
         f"CẢNH BÁO AQI tại {location_info}: {num_exceeded} thông số vượt ngưỡng, AQI cao nhất={max_aqi}.\n\n"
         f"Các thông số vượt ngưỡng:\n{sensors_text}\n\n"
         f"Thời điểm đo: {measured_at_str}"
     )
-    # Nội dung HTML
-    msg.add_alternative(html_content, subtype="html")
+    
+    # Tạo text part
+    text_part = MIMEText(text_content, 'plain', 'utf-8')
+    msg.attach(text_part)
+    
+    # Tạo HTML part (quan trọng: attach sau text để email client ưu tiên HTML)
+    html_part = MIMEText(html_content, 'html', 'utf-8')
+    msg.attach(html_part)
 
     # 8. Gửi email qua Gmail SMTP
     context = ssl.create_default_context()
@@ -539,7 +554,7 @@ def send_aqi_alert_email_summary(
             server.login(sender_email, app_password)
             print("Đăng nhập thành công!")
 
-            server.send_message(msg)
+            server.sendmail(sender_email, alert_email_to, msg.as_string())
             print(f"Email cảnh báo AQI tổng hợp đã được gửi thành công tới {alert_email_to}")
             print(f"  → Location: {location_name}, {num_exceeded} thông số vượt ngưỡng, AQI cao nhất: {max_aqi}")
 

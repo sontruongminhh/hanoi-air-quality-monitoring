@@ -95,7 +95,14 @@ services:
       # Gmail Configuration (for util_email.py)
       GMAIL_USER: ${GMAIL_USER}
       GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD}
-      # Thresholds (µg/m³) - Giá trị test (hạ thấp để dễ trigger cảnh báo)
+     
+      # Giá trị tiêu chuẩn tham khảo (WHO/Vietnam):
+      #   PM2.5: 35-50 (WHO: 15/25, VN QCVN 05:2013: 50)
+      #   PM10: 50-100 (WHO: 45, VN QCVN 05:2013: 100)
+      #   NO2: 25-40 (WHO: 25, VN QCVN 05:2013: 200)
+      #   O3: 100-120 (WHO: 100, VN QCVN 05:2013: 120)
+      #   CO: 4000-10000 (WHO: 4000, VN QCVN 05:2013: 10000)
+      #   SO2: 40-50 (WHO: 40, VN QCVN 05:2013: 350)
       THRESHOLD_PM25: 5
       THRESHOLD_PM10: 10
       THRESHOLD_NO2: 5
