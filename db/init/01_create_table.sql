@@ -1,4 +1,4 @@
--- Create single table to store readings and alert state (UTC times)
+
 CREATE TABLE IF NOT EXISTS aqi_readings (
     id BIGSERIAL PRIMARY KEY,
     location_id BIGINT NOT NULL,
@@ -10,17 +10,18 @@ CREATE TABLE IF NOT EXISTS aqi_readings (
     longitude DOUBLE PRECISION,
     provider TEXT DEFAULT 'OpenAQ',
 
-    parameter TEXT NOT NULL,                -- e.g., pm25, pm10, co, no2, o3, so2
-    unit TEXT,                              -- e.g., µg/m³
-    value DOUBLE PRECISION,                 -- latest_value
-    measurement_time TIMESTAMPTZ NOT NULL,  -- sensor's UTC time
+    parameter TEXT NOT NULL,                
+    unit TEXT,                              
+    value DOUBLE PRECISION,                
+    measurement_time TIMESTAMPTZ NOT NULL,  
 
     alerted BOOLEAN DEFAULT FALSE,
     alert_sent_at TIMESTAMPTZ,
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-    CONSTRAINT uq_reading UNIQUE (location_id, parameter, measurement_time)
+    
+    CONSTRAINT uq_reading UNIQUE (location_id, parameter, created_at)
 );
 
 CREATE INDEX IF NOT EXISTS idx_aqi_readings_loc_param_time

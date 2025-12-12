@@ -1,10 +1,10 @@
-# Thêm 2 dòng này lên ĐẦU TIÊN để tải file .env
+
 from dotenv import load_dotenv
 load_dotenv()
 
 import os
-import smtplib, ssl  # Thư viện gửi mail tích hợp sẵn
-from email.message import EmailMessage  # Thư viện soạn mail
+import smtplib, ssl  
+from email.message import EmailMessage  
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime, timezone
@@ -21,8 +21,7 @@ def calculate_aqi_from_value(value: float, parameter: str) -> tuple[int, str]:
     Returns:
         tuple: (aqi_value, aqi_level)
     """
-    # Bảng ngưỡng AQI cho PM2.5 (µg/m³) - theo tiêu chuẩn US EPA
-    # Có thể mở rộng cho các thông số khác
+    
     aqi_breakpoints = {
         'pm25': [
             (0, 12.0, 0, 50, 'Tốt'),
@@ -42,27 +41,26 @@ def calculate_aqi_from_value(value: float, parameter: str) -> tuple[int, str]:
         ]
     }
     
-    # Lấy bảng breakpoints cho parameter, nếu không có thì dùng pm25
+    
     breakpoints = aqi_breakpoints.get(parameter.lower(), aqi_breakpoints['pm25'])
     
-    # Tìm mức AQI phù hợp
+ 
     for bp_low, bp_high, aqi_low, aqi_high, level in breakpoints:
         if bp_low <= value <= bp_high:
-            # Tính AQI theo công thức: AQI = ((AQI_high - AQI_low) / (BP_high - BP_low)) * (value - BP_low) + AQI_low
+           
             if bp_high == float('inf'):
                 aqi_value = aqi_high
             else:
                 aqi_value = int(((aqi_high - aqi_low) / (bp_high - bp_low)) * (value - bp_low) + aqi_low)
             return aqi_value, level
     
-    # Fallback: nếu không tìm thấy, tính đơn giản dựa trên tỷ lệ
-    # Giả sử threshold tương ứng với AQI 100
+
     if value <= 0:
         return 0, 'Tốt'
     
-    # Tính AQI đơn giản: AQI ≈ (value / threshold) * 100
+  
     estimated_aqi = int((value / 50.0) * 100) if parameter.lower() == 'pm25' else int((value / 100.0) * 100)
-    estimated_aqi = min(500, max(0, estimated_aqi))  # Giới hạn trong khoảng 0-500
+    estimated_aqi = min(500, max(0, estimated_aqi)) 
     
     if estimated_aqi <= 50:
         level = 'Tốt'
@@ -88,67 +86,56 @@ def send_aqi_alert_email(
     alert_email_from=None,
     alert_email_to=None,
     subject=None,
-    param_name: str = None,
-    value: float = None,
-    unit: str = None,
-    threshold: float = None,
+    param_name: str = None,          
+    value: float = None,            
+    unit: str = None,                
+    threshold: float = None,         
     location_name: str = None,
     locality: str = None,
     country: str = None,
     latitude: float = None,
     longitude: float = None,
     measurement_time: datetime = None,
+    main_pollutant: str = None,      
 ):
     """
-    Gửi email cảnh báo khi chất lượng không khí vượt ngưỡng.
-    Hàm này được gọi từ consumer.py khi phát hiện dữ liệu vượt ngưỡng.
-
-    Args:
-        smtp_host, smtp_port, smtp_user, smtp_password: SMTP config (không dùng, dùng Gmail)
-        alert_email_from: Email người gửi (không dùng, dùng GMAIL_USER)
-        alert_email_to: Email người nhận
-        subject: Chủ đề email
-        param_name: Tên thông số hiển thị (vd: "PM2.5")
-        value: Giá trị đo được
-        unit: Đơn vị (vd: "µg/m³")
-        threshold: Ngưỡng cảnh báo
-        location_name: Tên trạm/khu vực
-        locality: Địa phương
-        country: Quốc gia
-        latitude, longitude: Tọa độ
-        measurement_time: Thời điểm đo (datetime object)
+    Gửi email cảnh báo AQI (chỉ số AQI tổng, không dùng các thông số phụ).
     """
     
-    # Validate dữ liệu bắt buộc
-    if not alert_email_to or value is None or not location_name or not param_name:
+    if not alert_email_to or value is None or not location_name:
         print("Lỗi: Thiếu thông tin bắt buộc để gửi email.")
         return
 
-    # 1. Lấy thông tin đăng nhập Gmail từ biến môi trường (.env)
-    sender_email = os.environ.get("GMAIL_USER")
-    app_password = os.environ.get("GMAIL_APP_PASSWORD")
+   
+    sender_email = alert_email_from or smtp_user or os.environ.get("GMAIL_USER")
+    app_password = smtp_password or os.environ.get("GMAIL_APP_PASSWORD")
+
+    host = smtp_host or os.environ.get("SMTP_HOST") or "smtp.gmail.com"
+    port = int(smtp_port or os.environ.get("SMTP_PORT") or 465)
 
     if not sender_email or not app_password:
-        print("Lỗi: GMAIL_USER hoặc GMAIL_APP_PASSWORD chưa được thiết lập.")
+        print("Lỗi: Thiếu SMTP user/app password (GMAIL_USER / GMAIL_APP_PASSWORD hoặc SMTP_USER / SMTP_PASSWORD).")
         return
     
-    # 2. Tính toán AQI và mức độ từ giá trị thực tế
-    # Chuẩn hóa tên parameter để tính AQI (vd: "PM2.5" -> "pm25")
-    param_normalized = param_name.lower().replace('.', '').replace(' ', '').replace('_', '')
-    if 'pm25' in param_normalized or 'pm2.5' in param_normalized:
-        param_for_aqi = 'pm25'
-    elif 'pm10' in param_normalized:
-        param_for_aqi = 'pm10'
+   
+    aqi = float(value)
+    if aqi <= 50:
+        aqi_level = 'Tốt'
+    elif aqi <= 100:
+        aqi_level = 'Trung bình'
+    elif aqi <= 150:
+        aqi_level = 'Kém (Unhealthy for Sensitive Groups)'
+    elif aqi <= 200:
+        aqi_level = 'Xấu (Unhealthy)'
+    elif aqi <= 300:
+        aqi_level = 'Rất xấu (Very Unhealthy)'
     else:
-        param_for_aqi = 'pm25'  # Fallback
-    
-    aqi, aqi_level = calculate_aqi_from_value(float(value), param_for_aqi)
-    
-    # 3. Format thời gian đo
+        aqi_level = 'Nguy hiểm (Hazardous)'
+
+  
     if measurement_time:
         if isinstance(measurement_time, datetime):
             if measurement_time.tzinfo is None:
-                # Nếu không có timezone, giả định là UTC
                 measurement_time = measurement_time.replace(tzinfo=timezone.utc)
             measured_at_str = measurement_time.strftime("%Y-%m-%d %H:%M:%S UTC")
         else:
@@ -156,11 +143,12 @@ def send_aqi_alert_email(
     else:
         measured_at_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     
-    # 4. Tạo chủ đề email nếu chưa có
+   
+    main_text = f" - Chất ô nhiễm chính: {main_pollutant}" if main_pollutant else ""
     if not subject:
-        subject = f"[CẢNH BÁO AQI] {location_name} vượt ngưỡng an toàn (AQI={aqi})"
+        subject = f"[CẢNH BÁO AQI] {location_name} vượt ngưỡng (AQI={aqi}{main_text})"
 
-    # 5. Tạo nội dung HTML email cảnh báo AQI
+   
     html_content = f"""<html>
 <head>
     <style>
@@ -220,7 +208,7 @@ def send_aqi_alert_email(
     <div class="container">
         <div class="header">CẢNH BÁO CHẤT LƯỢNG KHÔNG KHÍ</div>
         <p class="detail">
-            Hệ thống giám sát phát hiện <b>chỉ số chất lượng không khí (AQI)</b> tại khu vực
+            Hệ thống giám sát phát hiện <b>chỉ số ô nhiễm chính: {main_pollutant if main_pollutant else 'N/A'}</b> tại khu vực
             <b>{location_name}</b> đã <b>vượt ngưỡng an toàn</b>.
         </p>
 
@@ -232,9 +220,8 @@ def send_aqi_alert_email(
 
         <p class="detail">
             <b>Thông tin chi tiết:</b><br>
-            - Thông số chính: <b>{param_name}</b><br>
-            - Giá trị đo được: <b>{value} {unit or ''}</b><br>
-            - Ngưỡng cảnh báo: <b>{threshold} {unit or ''}</b><br>
+            - AQI: <b>{aqi}</b> (ngưỡng: {threshold or 'N/A'})<br>
+            {f"- Chất ô nhiễm chính: <b>{main_pollutant}</b><br>" if main_pollutant else ""}
             - Thời điểm đo: <b>{measured_at_str}</b>
         </p>
 
@@ -257,13 +244,13 @@ def send_aqi_alert_email(
 </body>
 </html>"""
 
-    # 6. Tạo đối tượng MIMEMultipart với alternative subtype
+   
     msg = MIMEMultipart('alternative')
     msg["Subject"] = subject
     msg["From"] = sender_email
     msg["To"] = alert_email_to
 
-    # Nội dung text fallback
+ 
     location_info = f"{location_name}"
     if locality:
         location_info += f", {locality}"
@@ -276,23 +263,23 @@ def send_aqi_alert_email(
         f"Thời điểm đo: {measured_at_str}"
     )
     
-    # Tạo text part
+    
     text_part = MIMEText(text_content, 'plain', 'utf-8')
     msg.attach(text_part)
     
-    # Tạo HTML part (quan trọng: attach sau text để email client ưu tiên HTML)
+   
     html_part = MIMEText(html_content, 'html', 'utf-8')
     msg.attach(html_part)
 
-    # 7. Gửi email qua Gmail SMTP
+    
     context = ssl.create_default_context()
 
     try:
-        print("Đang kết nối đến máy chủ Gmail...")
+        print(f"Đang kết nối SMTP tới {host}:{port} bằng user {sender_email} ...")
 
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
+        with smtplib.SMTP_SSL(host, port, context=context) as server:
             server.login(sender_email, app_password)
-            print("Đăng nhập thành công!")
+            print("Đăng nhập SMTP thành công!")
 
             server.sendmail(sender_email, alert_email_to, msg.as_string())
             print(f"Email cảnh báo AQI đã được gửi thành công tới {alert_email_to}")
@@ -313,30 +300,14 @@ def send_aqi_alert_email_summary(
     alert_sensors: list = None,
 ):
     """
-    Gửi email cảnh báo tổng hợp cho nhiều thông số vượt ngưỡng.
-    
-    Args:
-        alert_email_to: Email người nhận
-        location_name: Tên trạm/khu vực
-        locality: Địa phương
-        country: Quốc gia
-        latitude, longitude: Tọa độ
-        measurement_time: Thời điểm đo (datetime object)
-        alert_sensors: Danh sách các sensor vượt ngưỡng, mỗi item có:
-            - param_display: Tên thông số hiển thị
-            - value: Giá trị đo được
-            - unit: Đơn vị
-            - threshold: Ngưỡng cảnh báo
-            - aqi: Chỉ số AQI
-            - aqi_level: Mức độ AQI
+    Gửi email cảnh báo tổng hợp cho AQI (có thể nhiều bản ghi AQI nếu chạy nhiều location).
     """
-    
-    # Validate dữ liệu bắt buộc
+   
     if not alert_email_to or not location_name or not alert_sensors or len(alert_sensors) == 0:
         print("Lỗi: Thiếu thông tin bắt buộc để gửi email tổng hợp.")
         return
 
-    # 1. Lấy thông tin đăng nhập Gmail từ biến môi trường (.env)
+   
     sender_email = os.environ.get("GMAIL_USER")
     app_password = os.environ.get("GMAIL_APP_PASSWORD")
 
@@ -344,11 +315,12 @@ def send_aqi_alert_email_summary(
         print("Lỗi: GMAIL_USER hoặc GMAIL_APP_PASSWORD chưa được thiết lập.")
         return
     
-    # 2. Tìm AQI cao nhất
+   
     max_aqi = max(s['aqi'] for s in alert_sensors)
     max_aqi_level = next(s['aqi_level'] for s in alert_sensors if s['aqi'] == max_aqi)
+    main_pollutant = alert_sensors[0].get('main_pollutant') if alert_sensors else None
     
-    # 3. Format thời gian đo
+   
     if measurement_time:
         if isinstance(measurement_time, datetime):
             if measurement_time.tzinfo is None:
@@ -359,24 +331,26 @@ def send_aqi_alert_email_summary(
     else:
         measured_at_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     
-    # 4. Tạo chủ đề email
+   
     num_exceeded = len(alert_sensors)
+    mp_text = f", Main: {main_pollutant}" if main_pollutant else ""
     if num_exceeded > 1:
-        subject = f"[CẢNH BÁO AQI] {num_exceeded} thông số vượt ngưỡng tại {location_name} (AQI cao nhất: {max_aqi})"
+        subject = f"[CẢNH BÁO AQI] {num_exceeded} bản ghi vượt ngưỡng tại {location_name} (AQI cao nhất: {max_aqi}{mp_text})"
     else:
-        subject = f"[CẢNH BÁO AQI] {location_name} vượt ngưỡng an toàn (AQI={max_aqi})"
+        subject = f"[CẢNH BÁO AQI] {location_name} vượt ngưỡng (AQI={max_aqi}{mp_text})"
     
-    # 5. Tạo bảng HTML cho các thông số vượt ngưỡng
+   
     sensors_table_rows = ""
     for sensor in alert_sensors:
-        # Format giá trị và ngưỡng với số thập phân phù hợp
-        value_str = f"{sensor['value']:.2f}" if isinstance(sensor['value'], (int, float)) else str(sensor['value'])
-        threshold_str = f"{sensor['threshold']:.1f}" if isinstance(sensor['threshold'], (int, float)) else str(sensor['threshold'])
-        unit_str = sensor.get('unit', 'µg/m³')
+        value_str = f"{sensor['value']:.0f}" if isinstance(sensor['value'], (int, float)) else str(sensor['value'])
+        threshold_str = f"{sensor['threshold']:.0f}" if isinstance(sensor['threshold'], (int, float)) else str(sensor['threshold'])
+        unit_str = sensor.get('unit', 'AQI')
+        mp = sensor.get('main_pollutant')
+        mp_str = f"(Main: {mp})" if mp else ""
         
         sensors_table_rows += f"""
             <tr>
-                <td style="padding: 8px; border-bottom: 1px solid #ddd;"><b>{sensor['param_display']}</b></td>
+                <td style="padding: 8px; border-bottom: 1px solid #ddd;"><b>{sensor['param_display']} {mp_str}</b></td>
                 <td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: center; color: #e74c3c;"><b>{value_str} {unit_str}</b></td>
                 <td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: center;">{threshold_str} {unit_str}</td>
                 <td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: center;"><b>{sensor['aqi']}</b></td>
@@ -384,7 +358,7 @@ def send_aqi_alert_email_summary(
             </tr>
         """
     
-    # 6. Tạo nội dung HTML email tổng hợp
+    
     html_content = f"""<html>
 <head>
     <style>
@@ -457,7 +431,7 @@ def send_aqi_alert_email_summary(
     <div class="container">
         <div class="header">CẢNH BÁO CHẤT LƯỢNG KHÔNG KHÍ</div>
         <p class="detail">
-            Hệ thống giám sát phát hiện <b>{num_exceeded} thông số</b> tại khu vực
+            Hệ thống giám sát phát hiện <b>chỉ số ô nhiễm chính: {main_pollutant if main_pollutant else 'N/A'}</b> tại khu vực
             <b>{location_name}</b> đã <b>vượt ngưỡng an toàn</b>.
         </p>
 
@@ -468,7 +442,7 @@ def send_aqi_alert_email_summary(
         </p>
 
         <p class="detail">
-            <b>Danh sách các thông số vượt ngưỡng:</b>
+            <b>Danh sách AQI vượt ngưỡng:</b>
         </p>
         <table class="sensors-table">
             <thead>
@@ -512,13 +486,13 @@ def send_aqi_alert_email_summary(
 </body>
 </html>"""
 
-    # 7. Tạo đối tượng MIMEMultipart với alternative subtype
+   
     msg = MIMEMultipart('alternative')
     msg["Subject"] = subject
     msg["From"] = sender_email
     msg["To"] = alert_email_to
 
-    # Nội dung text fallback
+ 
     location_info = f"{location_name}"
     if locality:
         location_info += f", {locality}"
@@ -540,11 +514,11 @@ def send_aqi_alert_email_summary(
     text_part = MIMEText(text_content, 'plain', 'utf-8')
     msg.attach(text_part)
     
-    # Tạo HTML part (quan trọng: attach sau text để email client ưu tiên HTML)
+   
     html_part = MIMEText(html_content, 'html', 'utf-8')
     msg.attach(html_part)
 
-    # 8. Gửi email qua Gmail SMTP
+   
     context = ssl.create_default_context()
 
     try:

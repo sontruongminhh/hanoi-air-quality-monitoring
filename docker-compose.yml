@@ -48,51 +48,53 @@ services:
       timeout: 10s
       retries: 5
 
-  # Kafka Producer - OpenAQ Data Producer
+  
   producer:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: air-quality-producer
+    env_file:
+      - .env
     depends_on:
       kafka:
         condition: service_healthy
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
-      KAFKA_TOPIC: air-quality-topic
-      OPENAQ_API_URL: https://api.openaq.org/v3/locations
-      OPENAQ_API_KEY: ${OPENAQ_API_KEY}
-      OPENAQ_LOCATION_ID: ${OPENAQ_LOCATION_ID}
-      OPENAQ_LIMIT: ${OPENAQ_LIMIT:-100}
-      OPENAQ_COUNTRY: ${OPENAQ_COUNTRY:-VN}
-      OPENAQ_RADIUS: ${OPENAQ_RADIUS:-25000}
-      OPENAQ_COORDINATES: ${OPENAQ_COORDINATES}
+      KAFKA_TOPIC: aqi.hanoi.raw
+      # IQAir API configuration
+      IQAIR_API_KEY: ${IQAIR_API_KEY}
+      IQAIR_CITY: ${IQAIR_CITY:-Hanoi}
+      IQAIR_STATE: ${IQAIR_STATE:-Hanoi}
+      IQAIR_COUNTRY: ${IQAIR_COUNTRY:-Vietnam}
     command: python producer.py
     networks:
       - kafka-network
     restart: unless-stopped
 
-  # Kafka Consumer - Air Quality Data Consumer
+
   consumer:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: air-quality-consumer
+    env_file:
+      - .env
     depends_on:
       kafka:
         condition: service_healthy
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
-      KAFKA_TOPIC: air-quality-topic
+      KAFKA_TOPIC: aqi.hanoi.raw
       # Postgres connection
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_DB: aqi
       POSTGRES_USER: aqi_user
       POSTGRES_PASSWORD: aqi_password
-      # Email Configuration
+      
       ALERT_EMAIL_TO: ${ALERT_EMAIL_TO}
-      # Gmail Configuration (for util_email.py)
+      
       GMAIL_USER: ${GMAIL_USER}
       GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD}
      
@@ -103,30 +105,35 @@ services:
       #   O3: 100-120 (WHO: 100, VN QCVN 05:2013: 120)
       #   CO: 4000-10000 (WHO: 4000, VN QCVN 05:2013: 10000)
       #   SO2: 40-50 (WHO: 40, VN QCVN 05:2013: 350)
+      # Thresholds cho dữ liệu từ OpenAQ (µg/m³)
       THRESHOLD_PM25: 5
       THRESHOLD_PM10: 10
       THRESHOLD_NO2: 5
       THRESHOLD_O3: 20
       THRESHOLD_CO: 500
       THRESHOLD_SO2: 5
+      # Threshold cho AQI từ IQAir (AQI > 150 = "Unhealthy")
+      THRESHOLD_AQI: 150
     command: python consumer.py
     networks:
       - kafka-network
     restart: unless-stopped
 
-  # Kafka S3 Consumer - Đẩy dữ liệu lên S3 (BRONZE layer)
+ 
   s3-consumer:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: air-quality-s3-consumer
+    env_file:
+      - .env
     depends_on:
       kafka:
         condition: service_healthy
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
-      KAFKA_TOPIC: air-quality-topic
-      # S3 Configuration
+      KAFKA_TOPIC: aqi.hanoi.raw
+    
       S3_BUCKET: ${S3_BUCKET}
       S3_REGION: ${S3_REGION:-us-east-1}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
@@ -140,7 +147,7 @@ services:
       - kafka-network
     restart: unless-stopped
 
-  # Postgres for storing AQI data and alert state
+  
   postgres:
     image: postgres:15-alpine
     container_name: aqi-postgres
@@ -161,7 +168,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # Grafana for data visualization
+
   grafana:
     image: grafana/grafana:latest
     container_name: aqi-grafana

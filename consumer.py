@@ -5,7 +5,7 @@ Kafka Consumer - Nhận dữ liệu chất lượng không khí từ Kafka
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import time
 import psycopg2
 from kafka import KafkaConsumer
@@ -23,7 +23,8 @@ class AirQualityConsumer:
         """
     
         self.bootstrap_servers = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'localhost:9092')
-        self.topic = os.getenv('KAFKA_TOPIC', 'air-quality-topic')
+        # Đặt tên topic mặc định theo sơ đồ: aqi.hanoi.raw
+        self.topic = os.getenv('KAFKA_TOPIC', 'aqi.hanoi.raw')
         group_id = 'air-quality-consumer-group'
 
         self.consumer = KafkaConsumer(
@@ -54,15 +55,8 @@ class AirQualityConsumer:
         self.alert_email_to = os.getenv('ALERT_EMAIL_TO')
         self.alert_email_from = os.getenv('ALERT_EMAIL_FROM', 'alerts@example.com')
 
-        # Thresholds (ug/m3)
-        self.thresholds = {
-            'pm25': float(os.getenv('THRESHOLD_PM25', '15')),
-            'pm10': float(os.getenv('THRESHOLD_PM10', '45')),
-            'no2': float(os.getenv('THRESHOLD_NO2', '25')),
-            'o3': float(os.getenv('THRESHOLD_O3', '100')),
-            'co': float(os.getenv('THRESHOLD_CO', '4000')),
-            'so2': float(os.getenv('THRESHOLD_SO2', '40')),
-        }
+      
+        self.aqi_threshold = float(os.getenv('THRESHOLD_AQI', '150'))
 
         self.pg_conn = self._init_pg()
         print("✓ Kết nối Postgres thành công")
@@ -90,92 +84,186 @@ class AirQualityConsumer:
 
     def _normalize_param(self, raw_param: str, display: str) -> str:
         text = (raw_param or display or '').strip().lower()
-        # Loại bỏ các từ thừa như "mass", "concentration", etc.
         text = text.replace(' mass', '').replace(' concentration', '').replace('_', ' ').replace('.', ' ').strip()
         
-        # Mapping các parameter - kiểm tra chính xác trước
-        if text == 'pm25' or text == 'pm2.5' or text == 'pm 2.5':
+      
+        if text in ['p2', 'pm25', 'pm2.5', 'pm 2.5']:
             return 'pm25'
-        elif text == 'pm10' or text == 'pm 10':
+        elif text in ['p1', 'pm10', 'pm 10']:
             return 'pm10'
-        elif text == 'no2' or 'nitrogen dioxide' in text:
+        elif text in ['n2', 'no2', 'nitrogen dioxide']:
             return 'no2'
-        elif text == 'o3' or 'ozone' in text:
+        elif text in ['o3', 'ozone']:
             return 'o3'
-        elif text == 'co' or 'carbon monoxide' in text:
+        elif text in ['co', 'carbon monoxide']:
             return 'co'
-        elif text == 'so2' or 'sulfur dioxide' in text:
+        elif text in ['s2', 'so2', 'sulfur dioxide']:
             return 'so2'
+        elif text in ['aqi', 'aqius', 'aqi_us', 'aqi-us']:
+            return 'aqi_us'
         
-        # Fallback: trả về text đã clean (loại bỏ khoảng trắng)
         cleaned = text.replace(' ', '').replace('.', '')
-        # Nếu cleaned là một trong các giá trị hợp lệ, trả về
-        if cleaned in ['pm25', 'pm10', 'no2', 'o3', 'co', 'so2']:
-            return cleaned
         return cleaned
 
     def _parse_utc(self, dt_str: str) -> datetime:
         if not dt_str:
             return None
         try:
-            # OpenAQ returns ISO8601, sometimes with Z
+            
             if dt_str.endswith('Z'):
-                return datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
-            return datetime.fromisoformat(dt_str).astimezone(timezone.utc)
-        except Exception:
+                dt_clean = dt_str.rstrip('Z')
+               
+                dt = datetime.fromisoformat(dt_clean + '+00:00' if '+' not in dt_clean and dt_clean.count('-') <= dt_clean.count('T') else dt_clean)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt.astimezone(timezone.utc)
+           
+            if '+' in dt_str or (dt_str.count('-') > dt_str.count('T')):
+                dt = datetime.fromisoformat(dt_str)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt.astimezone(timezone.utc)
+           
+            dt = datetime.fromisoformat(dt_str)
+            return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+        except Exception as e:
+            print(f"  ⚠ Lỗi parse datetime '{dt_str}': {e}")
             return None
 
-    def _evaluate_reading(self, cursor, row: dict):
+    def _evaluate_reading(self, cursor, row: dict, unit: str = None):
         """
-        Kiểm tra timestamp trước đó để quyết định việc gửi cảnh báo
+        Kiểm tra điều kiện để quyết định việc gửi cảnh báo theo logic mới:
+        - Khung giờ 0h-1h sáng và 17h-18h chiều: so sánh với ngưỡng tiêu chuẩn (150) và gửi cảnh báo nếu vượt (chỉ 1 lần mỗi khung giờ)
+        - Ngoài khung giờ: chỉ cảnh báo khi AQI > 201 VÀ tăng so với lần trước
+
+        Args:
+            cursor: Database cursor
+            row: Row data với location_id, parameter='aqi', value, measurement_time
+            unit: Unit của giá trị (phải là 'AQI')
 
         Returns:
             tuple(bool, bool, datetime | None):
-                - is_newer: measurement_time có mới hơn lần trước không
-                - should_alert: có nên gửi cảnh báo (chỉ khi mới và vượt ngưỡng)
+                - is_newer: luôn True (vì luôn insert mỗi lần gọi)
+                - should_alert: có nên gửi cảnh báo theo logic mới
                 - prev_time: measurement_time gần nhất trước đó (nếu có)
         """
+        
         cursor.execute(
             """
-            SELECT measurement_time
+            SELECT measurement_time, value, created_at
             FROM aqi_readings
             WHERE location_id = %s AND parameter = %s
-            ORDER BY measurement_time DESC
+            ORDER BY created_at DESC
             LIMIT 1
             """,
             (row['location_id'], row['parameter']),
         )
         prev = cursor.fetchone()
         prev_time = prev[0] if prev else None
+        prev_value = prev[1] if prev else None
 
         measurement_time = row['measurement_time']
-        is_newer = not prev_time or measurement_time > prev_time
-
-        threshold = self.thresholds.get(row['parameter'])
         value = row['value']
-
-        if threshold is None or value is None:
-            return is_newer, False, prev_time
-
-        exceeds = float(value) > float(threshold)
-        should_alert = is_newer and exceeds
-        return is_newer, should_alert, prev_time
+        
+        if value is None:
+            return True, False, prev_time
+        
+        value_float = float(value)
+        threshold_standard = self.aqi_threshold  
+        
+        threshold_very_unhealthy = 250
+        
+      
+        current_time = datetime.now(timezone.utc)
+        local_tz = timezone(timedelta(hours=7))
+        current_time_local = current_time.astimezone(local_tz)
+        current_hour_local = current_time_local.hour
+        current_date_local = current_time_local.date()
+        
+      
+        is_alert_hour = (7 <= current_hour_local < 8) or (17 <= current_hour_local < 18)
+        
+      
+        print(
+            f"  → DEBUG: Giờ hiện tại (UTC) = {current_time.hour}:{current_time.minute}, "
+            f"Giờ địa phương (UTC+7) = {current_hour_local}:{current_time_local.minute}, "
+            f"is_alert_hour = {is_alert_hour}, AQI = {value_float}, threshold = {threshold_standard}"
+        )
+        
+        should_alert = False
+        
+        if is_alert_hour:
+            
+            if value_float > threshold_standard:
+              
+                if 7 <= current_hour_local < 8:
+                    hour_start_local, hour_end_local = 7, 8
+                else:  
+                    hour_start_local, hour_end_local = 17, 18
+                
+               
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) 
+                    FROM aqi_readings 
+                    WHERE location_id = %s 
+                      AND parameter = %s 
+                      AND alerted = TRUE 
+                      AND (created_at AT TIME ZONE '+07')::date = %s
+                      AND EXTRACT(HOUR FROM created_at AT TIME ZONE '+07') >= %s
+                      AND EXTRACT(HOUR FROM created_at AT TIME ZONE '+07') < %s
+                    """,
+                    (row['location_id'], row['parameter'], current_date_local, hour_start_local, hour_end_local),
+                )
+                alert_count = cursor.fetchone()[0]
+                
+                if alert_count == 0:
+                    
+                    should_alert = True
+                    print(f"  →  KHUNG GIỜ CẢNH BÁO ({hour_start_local}h-{hour_end_local}h, giờ địa phương): AQI={value_float} > {threshold_standard} - CẢNH BÁO LẦN ĐẦU TRONG KHUNG GIỜ")
+                else:
+                    
+                    print(f"  → AQI={value_float} > {threshold_standard} nhưng đã cảnh báo trong khung giờ {hour_start_local}h-{hour_end_local}h (giờ địa phương) hôm nay rồi (tránh spam)")
+        else:
+           
+            if value_float > threshold_very_unhealthy:
+                if prev_value is not None:
+                    prev_value_float = float(prev_value)
+                   
+                    if value_float > prev_value_float and value_float > threshold_very_unhealthy:
+                        should_alert = True
+                        print(f"  →  CẢNH BÁO NGOÀI KHUNG GIỜ: AQI={value_float} > {threshold_very_unhealthy} VÀ tăng so với lần trước ({prev_value_float})")
+                    else:
+                        print(f"  → AQI={value_float} > {threshold_very_unhealthy} nhưng không tăng so với lần trước ({prev_value_float}), không gửi cảnh báo (tránh spam)")
+                else:
+                  
+                    if value_float > threshold_very_unhealthy:
+                        should_alert = True
+                        print(f"  →  CẢNH BÁO LẦN ĐẦU: AQI={value_float} > {threshold_very_unhealthy}")
+        
+        return True, should_alert, prev_time
 
     def _insert_reading(self, cursor, row: dict, alerted: bool) -> bool:
+        """
+        Insert reading vào database. Luôn insert mỗi lần gọi API (không có ON CONFLICT DO NOTHING).
+        Unique constraint dựa trên (location_id, parameter, created_at) để cho phép nhiều bản ghi cùng measurement_time.
+        """
         cursor.execute(
             """
             INSERT INTO aqi_readings (
                 location_id, location_name, locality, country, country_code,
                 latitude, longitude, provider,
                 parameter, unit, value, measurement_time,
+                main_pollutant,
                 alerted, alert_sent_at
             ) VALUES (
                 %(location_id)s, %(location_name)s, %(locality)s, %(country)s, %(country_code)s,
                 %(latitude)s, %(longitude)s, %(provider)s,
                 %(parameter)s, %(unit)s, %(value)s, %(measurement_time)s,
+                %(main_pollutant)s,
                 %(alerted)s, CASE WHEN %(alerted)s THEN NOW() ELSE NULL END
             )
-            ON CONFLICT (location_id, parameter, measurement_time) DO NOTHING
+            -- Không có ON CONFLICT vì mỗi lần gọi API sẽ có created_at khác nhau (độ chính xác đến microsecond)
             """,
             {**row, 'alerted': alerted},
         )
@@ -183,7 +271,8 @@ class AirQualityConsumer:
 
     def _send_email(self, subject: str, param_name: str, value: float, unit: str, 
                      threshold: float, location_name: str, locality: str, country: str,
-                     latitude: float, longitude: float, measurement_time: datetime):
+                     latitude: float, longitude: float, measurement_time: datetime,
+                     main_pollutant: str = None):
         """
         Gửi email cảnh báo - wrapper gọi hàm từ util_email.py
         """
@@ -204,7 +293,8 @@ class AirQualityConsumer:
             country=country,
             latitude=latitude,
             longitude=longitude,
-            measurement_time=measurement_time
+            measurement_time=measurement_time,
+            main_pollutant=main_pollutant
         )
 
     def format_sensor_data(self, sensors):
@@ -256,7 +346,7 @@ class AirQualityConsumer:
                     print(f"\n Thông số chất lượng không khí:")
                     print(self.format_sensor_data(data.get('sensors', [])))
 
-                    # Prepare common fields
+                    
                     base = {
                         'location_id': data.get('location_id'),
                         'location_name': data.get('location_name'),
@@ -265,22 +355,39 @@ class AirQualityConsumer:
                         'country_code': data.get('country_code'),
                         'latitude': (data.get('coordinates') or {}).get('latitude'),
                         'longitude': (data.get('coordinates') or {}).get('longitude'),
-                        'provider': 'OpenAQ',
+                        'provider': 'IQAir',
                     }
 
                     sensors = data.get('sensors', []) or []
                     inserted_count = 0
-                    # Danh sách các sensor vượt ngưỡng để gửi email tổng hợp
-                    alert_sensors = []  # List of (sensor_info, aqi_value)
                     
+                 
                     for sensor in sensors:
                         value = sensor.get('latest_value')
                         unit = sensor.get('unit')
+                        
+                       
+                        if not unit or unit.upper() != 'AQI':
+                            print(f"  → Bỏ qua sensor {sensor.get('parameter')}: không phải AQI (unit={unit})")
+                            continue
+                        
                         measurement_time = self._parse_utc(sensor.get('latest_datetime'))
-                        # Fallback: dùng timestamp tổng nếu sensor không có thời gian riêng
                         if measurement_time is None:
-                            measurement_time = self._parse_utc(data.get('timestamp')) or datetime.now(timezone.utc)
-                        param_norm = self._normalize_param(sensor.get('parameter'), sensor.get('parameter_display'))
+                            print(f"  →  latest_datetime từ sensor không parse được: {sensor.get('latest_datetime')}")
+                            measurement_time = self._parse_utc(data.get('timestamp'))
+                            if measurement_time is None:
+                                print(f"  →  timestamp tổng cũng không parse được, dùng datetime.now()")
+                                measurement_time = datetime.now(timezone.utc)
+                            else:
+                                print(f"  →  Dùng timestamp tổng (thời điểm gọi API): {measurement_time.isoformat()}")
+                        else:
+                            print(f"  →  Dùng latest_datetime từ sensor (thời điểm đo từ API): {measurement_time.isoformat()}")
+                        
+                      
+                        param_norm = 'aqi'
+                        
+                        
+                        main_pollutant = sensor.get('main_pollutant_display') or sensor.get('main_pollutant', None)
 
                         row = {
                             **base,
@@ -288,90 +395,70 @@ class AirQualityConsumer:
                             'unit': unit,
                             'value': value,
                             'measurement_time': measurement_time,
+                            'main_pollutant': main_pollutant,  # Thêm main_pollutant vào row
                         }
 
                         try:
-                            is_newer, should_alert, prev_time = self._evaluate_reading(cursor, row)
+                           
+                            is_newer, should_alert, prev_time = self._evaluate_reading(cursor, row, unit)
                             
-                            # Debug logging
-                            threshold = self.thresholds.get(param_norm)
                             value_float = float(value) if value is not None else None
-                            exceeds = threshold is not None and value_float is not None and value_float > float(threshold)
-                            print(f"  → Sensor {param_norm}: value={value_float}, threshold={threshold}, exceeds={exceeds}, is_newer={is_newer}, should_alert={should_alert}")
+                            
+                            print(f"  → AQI: {value_float}, should_alert={should_alert}")
+                            print(f"  → Chất ô nhiễm chính: {main_pollutant}")
+                            
                             
                             inserted = self._insert_reading(cursor, row, alerted=should_alert)
                             if inserted:
                                 inserted_count += 1
+                                print(f"  →  Đã ghi vào DB (ID mới)")
                             else:
-                                print(f"  → Bỏ qua ghi DB cho sensor {param_norm}: đã tồn tại bản ghi trùng")
-
-                            if not is_newer:
-                                prev_str = prev_time.isoformat() if prev_time else 'N/A'
-                                print(f"  → Sensor {param_norm}: measurement_time {measurement_time.isoformat()} "
-                                      f"không mới hơn lần trước ({prev_str}), chỉ lưu lịch sử")
+                                print(f"  →  Không ghi được vào DB (có thể do lỗi)")
 
                             if should_alert:
-                                # Tính AQI để tìm sensor có mức độ nguy hiểm cao nhất
-                                param_for_aqi = param_norm
-                                aqi, aqi_level = calculate_aqi_from_value(value_float, param_for_aqi)
                                 
-                                # Lấy tên hiển thị từ sensor, nếu không có thì tạo từ param_norm
-                                param_display = sensor.get('parameter_display')
-                                if not param_display:
-                                    # Tạo tên hiển thị đẹp từ param_norm
-                                    display_map = {
-                                        'pm25': 'PM2.5',
-                                        'pm10': 'PM10',
-                                        'no2': 'NO₂ mass',
-                                        'o3': 'O₃ mass',
-                                        'co': 'CO mass',
-                                        'so2': 'SO₂ mass'
-                                    }
-                                    param_display = display_map.get(param_norm, param_norm.upper())
+                                aqi_value = value_float
+                              
+                                if aqi_value <= 50:
+                                    aqi_level = 'Tốt'
+                                elif aqi_value <= 100:
+                                    aqi_level = 'Trung bình'
+                                elif aqi_value <= 150:
+                                    aqi_level = 'Kém (Unhealthy for Sensitive Groups)'
+                                elif aqi_value <= 200:
+                                    aqi_level = 'Xấu (Unhealthy)'
+                                elif aqi_value <= 300:
+                                    aqi_level = 'Rất xấu (Very Unhealthy)'
+                                else:
+                                    aqi_level = 'Nguy hiểm (Hazardous)'
                                 
-                                alert_sensors.append({
-                                    'param_display': param_display,
-                                    'value': value_float,
-                                    'unit': unit or 'µg/m³',
-                                    'threshold': float(threshold),
-                                    'aqi': aqi,
-                                    'aqi_level': aqi_level,
-                                    'measurement_time': measurement_time
-                                })
-                                print(f"  → ⚠️ PHÁT HIỆN VƯỢT NGƯỠNG! {param_display}: {value_float} {unit or 'µg/m³'} (AQI={aqi})")
-                        except Exception as e:
-                            print(f"✗ Lỗi khi ghi DB cho sensor {param_norm}: {e}")
-                            import traceback
-                            traceback.print_exc()
+                               
+                                param_display = f"AQI (Main: {main_pollutant})"
+                                print(f"  →  PHÁT HIỆN VƯỢT NGƯỠNG! {param_display}: {aqi_value} ({aqi_level})")
 
-                    # Gửi 1 email tổng hợp cho tất cả các sensor vượt ngưỡng (nếu có)
-                    if alert_sensors:
-                        # Sắp xếp theo AQI giảm dần để hiển thị thông số nguy hiểm nhất trước
-                        alert_sensors.sort(key=lambda x: x['aqi'], reverse=True)
-                        
-                        # Lấy measurement_time từ sensor đầu tiên (hoặc từ data chung)
-                        measurement_time_for_email = alert_sensors[0]['measurement_time']
-                        if not measurement_time_for_email:
-                            measurement_time_for_email = self._parse_utc(data.get('timestamp')) or datetime.now(timezone.utc)
-                        
-                        num_exceeded = len(alert_sensors)
-                        max_aqi = alert_sensors[0]['aqi']
-                        
-                        print(f"  → ⚠️ GỬI EMAIL CẢNH BÁO TỔNG HỢP: {num_exceeded} thông số vượt ngưỡng, AQI cao nhất = {max_aqi}")
-                        try:
-                            send_aqi_alert_email_summary(
-                                alert_email_to=self.alert_email_to,
-                                location_name=base['location_name'],
-                                locality=base['locality'] or 'N/A',
-                                country=base['country'] or 'N/A',
-                                latitude=base['latitude'] or 0.0,
-                                longitude=base['longitude'] or 0.0,
-                                measurement_time=measurement_time_for_email,
-                                alert_sensors=alert_sensors
-                            )
-                            print(f"  → ✓ Đã gửi email cảnh báo tổng hợp ({num_exceeded} thông số vượt ngưỡng)")
-                        except Exception as email_error:
-                            print(f"  → ✗ Lỗi khi gửi email: {email_error}")
+                              
+                                try:
+                                    self._send_email(
+                                        subject=None,
+                                        param_name=param_display,
+                                        value=aqi_value,
+                                        unit='AQI',
+                                        threshold=float(self.aqi_threshold),
+                                        location_name=base['location_name'],
+                                        locality=base['locality'] or 'N/A',
+                                        country=base['country'] or 'N/A',
+                                        latitude=base['latitude'] or 0.0,
+                                        longitude=base['longitude'] or 0.0,
+                                        measurement_time=measurement_time,
+                                        main_pollutant=main_pollutant
+                                    )
+                                    print("  → ✓ Đã gửi email cảnh báo đơn")
+                                except Exception as email_error:
+                                    print(f"  → ✗ Lỗi khi gửi email: {email_error}")
+                                    import traceback
+                                    traceback.print_exc()
+                        except Exception as e:
+                            print(f"✗ Lỗi khi ghi DB cho AQI: {e}")
                             import traceback
                             traceback.print_exc()
 
