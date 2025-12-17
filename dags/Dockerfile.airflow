@@ -1,0 +1,16 @@
+# Dockerfile để build custom Airflow image với dependencies
+FROM apache/airflow:2.8.0
+
+USER root
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+USER airflow
+
+# Install Python dependencies cho DAGs
+COPY dags/requirements_airflow.txt /tmp/requirements_airflow.txt
+RUN pip install --no-cache-dir -r /tmp/requirements_airflow.txt
+

@@ -1,0 +1,18 @@
+# Docker Compose override cho Airflow
+# Sử dụng: docker-compose -f docker-compose.yml -f docker-compose.airflow.yml up -d
+
+version: '3.8'
+
+services:
+  airflow-scheduler:
+    build:
+      context: .
+      dockerfile: dags/Dockerfile.airflow
+    image: aqi-airflow:custom
+
+  airflow-webserver:
+    build:
+      context: .
+      dockerfile: dags/Dockerfile.airflow
+    image: aqi-airflow:custom
+

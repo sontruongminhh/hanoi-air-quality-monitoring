@@ -189,9 +189,213 @@ services:
       - kafka-network
     restart: unless-stopped
 
+  # Airflow Postgres (cho metadata)
+  postgres-airflow:
+    image: postgres:15-alpine
+    container_name: aqi-postgres-airflow
+    environment:
+      POSTGRES_DB: airflow
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+    volumes:
+      - postgres-airflow-data:/var/lib/postgresql/data
+    networks:
+      - kafka-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Airflow - Init DB
+  airflow-init:
+    image: apache/airflow:2.8.0
+    container_name: aqi-airflow-init
+    env_file:
+      - .env
+    environment:
+      _AIRFLOW_DB_UPGRADE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'
+      _AIRFLOW_WWW_USER_USERNAME: admin
+      _AIRFLOW_WWW_USER_PASSWORD: admin
+      _AIRFLOW_WWW_USER_EMAIL: admin@example.com
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./dags/utils:/opt/airflow/dags/utils
+      - airflow-logs:/opt/airflow/logs
+      - airflow-config:/opt/airflow/config
+    depends_on:
+      postgres-airflow:
+        condition: service_healthy
+    networks:
+      - kafka-network
+    command: version
+    profiles:
+      - airflow
+    restart: "no"
+
+  # Airflow - Scheduler
+  airflow-scheduler:
+    image: apache/airflow:2.8.0
+    container_name: aqi-airflow-scheduler
+    env_file:
+      - .env
+    environment:
+      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres-airflow:5432/airflow
+      AIRFLOW__CORE__FERNET_KEY: ''
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.session
+      
+      AIRFLOW__AWS__AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AIRFLOW__AWS__AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AIRFLOW__AWS__S3_BUCKET: ${S3_BUCKET}
+      S3_BUCKET: ${S3_BUCKET}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL}
+      OPENAQ_LOCATION_ID: ${OPENAQ_LOCATION_ID:-4946813}
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./dags/utils:/opt/airflow/dags/utils
+      - airflow-logs:/opt/airflow/logs
+      - airflow-config:/opt/airflow/config
+    depends_on:
+      postgres-airflow:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    networks:
+      - kafka-network
+    command: scheduler
+    profiles:
+      - airflow
+    restart: unless-stopped
+
+  # Airflow - Webserver
+  airflow-webserver:
+    image: apache/airflow:2.8.0
+    container_name: aqi-airflow-webserver
+    env_file:
+      - .env
+    environment:
+      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres-airflow:5432/airflow
+      AIRFLOW__CORE__FERNET_KEY: ''
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.session
+   
+      AIRFLOW__AWS__AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AIRFLOW__AWS__AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AIRFLOW__AWS__S3_BUCKET: ${S3_BUCKET}
+      S3_BUCKET: ${S3_BUCKET}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL}
+      OPENAQ_LOCATION_ID: ${OPENAQ_LOCATION_ID:-4946813}
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./dags/utils:/opt/airflow/dags/utils
+      - airflow-logs:/opt/airflow/logs
+      - airflow-config:/opt/airflow/config
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres-airflow:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    networks:
+      - kafka-network
+    command: webserver
+    profiles:
+      - airflow
+    restart: unless-stopped
+
+  # Service để copy dữ liệu từ OpenAQ archive sang S3
+  copy-openaq-archive:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: copy-openaq-archive
+    env_file:
+      - .env
+    environment:
+      S3_BUCKET: ${S3_BUCKET}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL}
+      OPENAQ_LOCATION_ID: ${OPENAQ_LOCATION_ID:-4946813}
+    profiles:
+      - copy-archive
+    command: python copy_openaq_archive_to_s3.py 2024
+    restart: "no"
+
+  # Service để upload file CSV.gz từ local lên S3
+  upload-local-files:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: upload-local-files
+    env_file:
+      - .env
+    environment:
+      S3_BUCKET: ${S3_BUCKET}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL}
+      OPENAQ_LOCATION_ID: ${OPENAQ_LOCATION_ID:-4946813}
+    profiles:
+      - upload-local
+    volumes:
+      # Mount thư mục chứa file CSV.gz từ Windows
+      - type: bind
+        source: C:/Users/HH/Downloads/openaq_4946813_2025_07_12
+        target: /data
+    command: python upload_local_files_to_s3.py /data
+    restart: "no"
+
+  # Service để load Gold data từ S3 vào PostgreSQL
+  load-gold-to-postgres:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: load-gold-to-postgres
+    env_file:
+      - .env
+    environment:
+      S3_BUCKET: ${S3_BUCKET}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: aqi
+      POSTGRES_USER: aqi_user
+      POSTGRES_PASSWORD: aqi_password
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles:
+      - load-gold
+    networks:
+      - kafka-network
+    command: python load_gold_to_postgres.py
+    restart: "no"
+
 networks:
   kafka-network:
     driver: bridge
 volumes:
   pgdata:
   grafana-data:
+  postgres-airflow-data:
+  airflow-logs:
+  airflow-config:

@@ -10,9 +10,9 @@ import time
 import psycopg2
 from kafka import KafkaConsumer
 from dotenv import load_dotenv
-from util_email import send_aqi_alert_email, send_aqi_alert_email_summary, calculate_aqi_from_value
+from util_email import send_aqi_alert_email
 
-# Load environment variables
+
 load_dotenv()
 
 
@@ -23,7 +23,7 @@ class AirQualityConsumer:
         """
     
         self.bootstrap_servers = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'localhost:9092')
-        # Đặt tên topic mặc định theo sơ đồ: aqi.hanoi.raw
+        
         self.topic = os.getenv('KAFKA_TOPIC', 'aqi.hanoi.raw')
         group_id = 'air-quality-consumer-group'
 
@@ -36,18 +36,18 @@ class AirQualityConsumer:
             auto_offset_reset='earliest',
             enable_auto_commit=True
         )
-        print(f"✓ Consumer đã kết nối tới Kafka: {self.bootstrap_servers}")
-        print(f"✓ Topic: {self.topic}")
-        print(f"✓ Group ID: {group_id}")
+        print(f"[OK] Consumer da ket noi toi Kafka: {self.bootstrap_servers}")
+        print(f"[OK] Topic: {self.topic}")
+        print(f"[OK] Group ID: {group_id}")
 
-        # Postgres config
+        
         self.pg_host = os.getenv('POSTGRES_HOST', 'localhost')
         self.pg_port = int(os.getenv('POSTGRES_PORT', '5432'))
         self.pg_db = os.getenv('POSTGRES_DB', 'aqi')
         self.pg_user = os.getenv('POSTGRES_USER', 'aqi_user')
         self.pg_password = os.getenv('POSTGRES_PASSWORD', 'aqi_password')
 
-        # Email config
+        
         self.smtp_host = os.getenv('SMTP_HOST')
         self.smtp_port = int(os.getenv('SMTP_PORT', '587'))
         self.smtp_user = os.getenv('SMTP_USER')
@@ -59,7 +59,7 @@ class AirQualityConsumer:
         self.aqi_threshold = float(os.getenv('THRESHOLD_AQI', '150'))
 
         self.pg_conn = self._init_pg()
-        print("✓ Kết nối Postgres thành công")
+        print("[OK] Ket noi Postgres thanh cong")
 
     def _init_pg(self):
         retries = 30
@@ -120,21 +120,22 @@ class AirQualityConsumer:
            
             if '+' in dt_str or (dt_str.count('-') > dt_str.count('T')):
                 dt = datetime.fromisoformat(dt_str)
-                if dt.tzinfo is None:
+                if dt.tzinfo is None: 
                     dt = dt.replace(tzinfo=timezone.utc)
                 return dt.astimezone(timezone.utc)
            
             dt = datetime.fromisoformat(dt_str)
             return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
         except Exception as e:
-            print(f"  ⚠ Lỗi parse datetime '{dt_str}': {e}")
+            print(f"   [ERROR] Loi parse datetime '{dt_str}': {e}")
             return None
 
     def _evaluate_reading(self, cursor, row: dict, unit: str = None):
         """
-        Kiểm tra điều kiện để quyết định việc gửi cảnh báo theo logic mới:
-        - Khung giờ 0h-1h sáng và 17h-18h chiều: so sánh với ngưỡng tiêu chuẩn (150) và gửi cảnh báo nếu vượt (chỉ 1 lần mỗi khung giờ)
-        - Ngoài khung giờ: chỉ cảnh báo khi AQI > 201 VÀ tăng so với lần trước
+        Kiểm tra điều kiện để quyết định việc gửi cảnh báo:
+        - Chỉ cảnh báo trong 2 khung giờ: 7h-8h sáng và 17h-18h chiều (UTC+7)
+        - So sánh với ngưỡng tiêu chuẩn (150) và gửi cảnh báo nếu vượt (chỉ 1 lần duy nhất mỗi khung giờ)
+        - Ngoài 2 khung giờ trên: không cảnh báo
 
         Args:
             cursor: Database cursor
@@ -144,34 +145,18 @@ class AirQualityConsumer:
         Returns:
             tuple(bool, bool, datetime | None):
                 - is_newer: luôn True (vì luôn insert mỗi lần gọi)
-                - should_alert: có nên gửi cảnh báo theo logic mới
+                - should_alert: có nên gửi cảnh báo (chỉ True trong khung giờ và chưa cảnh báo)
                 - prev_time: measurement_time gần nhất trước đó (nếu có)
         """
         
-        cursor.execute(
-            """
-            SELECT measurement_time, value, created_at
-            FROM aqi_readings
-            WHERE location_id = %s AND parameter = %s
-            ORDER BY created_at DESC
-            LIMIT 1
-            """,
-            (row['location_id'], row['parameter']),
-        )
-        prev = cursor.fetchone()
-        prev_time = prev[0] if prev else None
-        prev_value = prev[1] if prev else None
-
         measurement_time = row['measurement_time']
         value = row['value']
         
         if value is None:
-            return True, False, prev_time
+            return True, False, None
         
         value_float = float(value)
-        threshold_standard = self.aqi_threshold  
-        
-        threshold_very_unhealthy = 250
+        threshold_standard = self.aqi_threshold  # 150 (ngưỡng tiêu chuẩn)
         
       
         current_time = datetime.now(timezone.utc)
@@ -185,23 +170,23 @@ class AirQualityConsumer:
         
       
         print(
-            f"  → DEBUG: Giờ hiện tại (UTC) = {current_time.hour}:{current_time.minute}, "
-            f"Giờ địa phương (UTC+7) = {current_hour_local}:{current_time_local.minute}, "
+            f"  DEBUG: Gio hien tai (UTC) = {current_time.hour}:{current_time.minute}, "
+            f"Gio dia phuong (UTC+7) = {current_hour_local}:{current_time_local.minute}, "
             f"is_alert_hour = {is_alert_hour}, AQI = {value_float}, threshold = {threshold_standard}"
         )
         
         should_alert = False
         
+        # Chỉ cảnh báo trong 2 khung giờ: 7h-8h và 17h-18h (UTC+7)
         if is_alert_hour:
-            
             if value_float > threshold_standard:
-              
+                # Xác định khung giờ địa phương (7-8h hoặc 17-18h)
                 if 7 <= current_hour_local < 8:
                     hour_start_local, hour_end_local = 7, 8
-                else:  
+                else:  # 17 <= current_hour_local < 18
                     hour_start_local, hour_end_local = 17, 18
                 
-               
+                # Kiểm tra xem đã gửi cảnh báo trong khung giờ này (cùng ngày) chưa
                 cursor.execute(
                     """
                     SELECT COUNT(*) 
@@ -218,30 +203,17 @@ class AirQualityConsumer:
                 alert_count = cursor.fetchone()[0]
                 
                 if alert_count == 0:
-                    
+                    # Chua co canh bao nao trong khung gio nay -> gui canh bao
                     should_alert = True
-                    print(f"  →  KHUNG GIỜ CẢNH BÁO ({hour_start_local}h-{hour_end_local}h, giờ địa phương): AQI={value_float} > {threshold_standard} - CẢNH BÁO LẦN ĐẦU TRONG KHUNG GIỜ")
+                    print(f"  [ALERT] KHUNG GIO CANH BAO ({hour_start_local}h-{hour_end_local}h, gio dia phuong): AQI={value_float} > {threshold_standard} - CANH BAO LAN DAU TRONG KHUNG GIO")
                 else:
-                    
-                    print(f"  → AQI={value_float} > {threshold_standard} nhưng đã cảnh báo trong khung giờ {hour_start_local}h-{hour_end_local}h (giờ địa phương) hôm nay rồi (tránh spam)")
+                    # Da canh bao trong khung gio nay roi -> khong gui nua
+                    print(f"  AQI={value_float} > {threshold_standard} nhung da canh bao trong khung gio {hour_start_local}h-{hour_end_local}h (gio dia phuong) hom nay roi (tranh spam)")
         else:
-           
-            if value_float > threshold_very_unhealthy:
-                if prev_value is not None:
-                    prev_value_float = float(prev_value)
-                   
-                    if value_float > prev_value_float and value_float > threshold_very_unhealthy:
-                        should_alert = True
-                        print(f"  →  CẢNH BÁO NGOÀI KHUNG GIỜ: AQI={value_float} > {threshold_very_unhealthy} VÀ tăng so với lần trước ({prev_value_float})")
-                    else:
-                        print(f"  → AQI={value_float} > {threshold_very_unhealthy} nhưng không tăng so với lần trước ({prev_value_float}), không gửi cảnh báo (tránh spam)")
-                else:
-                  
-                    if value_float > threshold_very_unhealthy:
-                        should_alert = True
-                        print(f"  →  CẢNH BÁO LẦN ĐẦU: AQI={value_float} > {threshold_very_unhealthy}")
+            # Ngoai khung gio: khong canh bao
+            print(f"  Ngoai khung gio canh bao: khong gui canh bao (AQI={value_float})")
         
-        return True, should_alert, prev_time
+        return True, should_alert, None
 
     def _insert_reading(self, cursor, row: dict, alerted: bool) -> bool:
         """
@@ -368,20 +340,20 @@ class AirQualityConsumer:
                         
                        
                         if not unit or unit.upper() != 'AQI':
-                            print(f"  → Bỏ qua sensor {sensor.get('parameter')}: không phải AQI (unit={unit})")
+                            print(f"  Bo qua sensor {sensor.get('parameter')}: khong phai AQI (unit={unit})")
                             continue
                         
                         measurement_time = self._parse_utc(sensor.get('latest_datetime'))
                         if measurement_time is None:
-                            print(f"  →  latest_datetime từ sensor không parse được: {sensor.get('latest_datetime')}")
+                            print(f"  [WARN] latest_datetime tu sensor khong parse duoc: {sensor.get('latest_datetime')}")
                             measurement_time = self._parse_utc(data.get('timestamp'))
                             if measurement_time is None:
-                                print(f"  →  timestamp tổng cũng không parse được, dùng datetime.now()")
+                                print(f"  [WARN] timestamp tong cung khong parse duoc, dung datetime.now()")
                                 measurement_time = datetime.now(timezone.utc)
                             else:
-                                print(f"  →  Dùng timestamp tổng (thời điểm gọi API): {measurement_time.isoformat()}")
+                                print(f"  [INFO] Dung timestamp tong (thoi diem goi API): {measurement_time.isoformat()}")
                         else:
-                            print(f"  →  Dùng latest_datetime từ sensor (thời điểm đo từ API): {measurement_time.isoformat()}")
+                            print(f"  [INFO] Dung latest_datetime tu sensor (thoi diem do tu API): {measurement_time.isoformat()}")
                         
                       
                         param_norm = 'aqi'
@@ -395,7 +367,7 @@ class AirQualityConsumer:
                             'unit': unit,
                             'value': value,
                             'measurement_time': measurement_time,
-                            'main_pollutant': main_pollutant,  # Thêm main_pollutant vào row
+                            'main_pollutant': main_pollutant,  
                         }
 
                         try:
@@ -404,16 +376,16 @@ class AirQualityConsumer:
                             
                             value_float = float(value) if value is not None else None
                             
-                            print(f"  → AQI: {value_float}, should_alert={should_alert}")
-                            print(f"  → Chất ô nhiễm chính: {main_pollutant}")
+                            print(f"  AQI: {value_float}, should_alert={should_alert}")
+                            print(f"  Chat o nhiem chinh: {main_pollutant}")
                             
                             
                             inserted = self._insert_reading(cursor, row, alerted=should_alert)
                             if inserted:
                                 inserted_count += 1
-                                print(f"  →  Đã ghi vào DB (ID mới)")
+                                print(f"  [OK] Da ghi vao DB (ID moi)")
                             else:
-                                print(f"  →  Không ghi được vào DB (có thể do lỗi)")
+                                print(f"  [ERROR] Khong ghi duoc vao DB (co the do loi)")
 
                             if should_alert:
                                 
@@ -434,7 +406,7 @@ class AirQualityConsumer:
                                 
                                
                                 param_display = f"AQI (Main: {main_pollutant})"
-                                print(f"  →  PHÁT HIỆN VƯỢT NGƯỠNG! {param_display}: {aqi_value} ({aqi_level})")
+                                print(f"  [ALERT] PHAT HIEN VUOT NGUONG! {param_display}: {aqi_value} ({aqi_level})")
 
                               
                                 try:
@@ -452,33 +424,33 @@ class AirQualityConsumer:
                                         measurement_time=measurement_time,
                                         main_pollutant=main_pollutant
                                     )
-                                    print("  → ✓ Đã gửi email cảnh báo đơn")
+                                    print("  [OK] Da gui email canh bao don")
                                 except Exception as email_error:
-                                    print(f"  → ✗ Lỗi khi gửi email: {email_error}")
+                                    print(f"  [ERROR] Loi khi gui email: {email_error}")
                                     import traceback
                                     traceback.print_exc()
                         except Exception as e:
-                            print(f"✗ Lỗi khi ghi DB cho AQI: {e}")
+                            print(f"[ERROR] Loi khi ghi DB cho AQI: {e}")
                             import traceback
                             traceback.print_exc()
 
-                    print(f"  → Đã ghi {inserted_count} sensors vào Postgres")
+                    print(f"  Da ghi {inserted_count} sensors vao Postgres")
 
-                    print(f"\n Kafka Info:")
-                    print(f"  → Partition: {message.partition}, Offset: {message.offset}")
+                    print(f"\n[INFO] Kafka Info:")
+                    print(f"  Partition: {message.partition}, Offset: {message.offset}")
                     print(f"{'='*80}")
 
         except KeyboardInterrupt:
-            print("\n✓ Dừng consumer.")
+            print("\n[OK] Dung consumer.")
 
         finally:
             self.close()
 
     def close(self):
-        """Đóng kết nối Consumer"""
-        print("\nĐang đóng Consumer...")
+        """Dong ket noi Consumer"""
+        print("\nDang dong Consumer...")
         self.consumer.close()
-        print("✓ Consumer đã đóng.")
+        print("[OK] Consumer da dong.")
 
 
 def main():

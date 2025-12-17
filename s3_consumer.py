@@ -36,9 +36,9 @@ class S3Consumer:
             auto_offset_reset='earliest',
             enable_auto_commit=True
         )
-        print(f"✓ S3 Consumer đã kết nối tới Kafka: {self.bootstrap_servers}")
-        print(f"✓ Topic: {self.topic}")
-        print(f"✓ Group ID: {group_id}")
+        print(f"[OK] S3 Consumer da ket noi toi Kafka: {self.bootstrap_servers}")
+        print(f"[OK] Topic: {self.topic}")
+        print(f"[OK] Group ID: {group_id}")
 
         # S3 config
         self.s3_bucket = os.getenv('S3_BUCKET')
@@ -74,10 +74,10 @@ class S3Consumer:
         # Test S3 connection
         try:
             self.s3_client.head_bucket(Bucket=self.s3_bucket)
-            print(f"✓ Kết nối S3 thành công: {self.s3_bucket}")
+            print(f"[OK] Ket noi S3 thanh cong: {self.s3_bucket}")
         except ClientError as e:
-            print(f"⚠ Cảnh báo: Không thể kết nối S3: {e}")
-            print("  Tiếp tục chạy nhưng có thể lỗi khi ghi file...")
+            print(f"[WARN] Canh bao: Khong the ket noi S3: {e}")
+            print("  Tiep tuc chay nhung co the loi khi ghi file...")
 
         # Batch storage
         self.batch = []
@@ -137,14 +137,14 @@ class S3Consumer:
                 }
             )
             
-            print(f"✓ Đã upload {len(batch_data)} records lên S3: s3://{self.s3_bucket}/{s3_key}")
+            print(f"[OK] Da upload {len(batch_data)} records len S3: s3://{self.s3_bucket}/{s3_key}")
             return True
             
         except ClientError as e:
-            print(f"✗ Lỗi khi upload lên S3: {e}")
+            print(f"[ERROR] Loi khi upload len S3: {e}")
             return False
         except Exception as e:
-            print(f"✗ Lỗi không xác định khi upload S3: {e}")
+            print(f"[ERROR] Loi khong xac dinh khi upload S3: {e}")
             return False
 
     def _should_flush_batch(self):
@@ -180,8 +180,8 @@ class S3Consumer:
             self.batch = []
             self.last_flush_time = time.time()
         else:
-            # Nếu lỗi, giữ lại batch để retry (có thể implement retry logic sau)
-            print(f"⚠ Giữ lại {len(self.batch)} messages để retry sau")
+            # Neu loi, giu lai batch de retry (co the implement retry logic sau)
+            print(f"[WARN] Giu lai {len(self.batch)} messages de retry sau")
 
     def start_consuming(self):
         """
@@ -211,19 +211,19 @@ class S3Consumer:
                 # Thêm vào batch
                 self.batch.append(data)
                 
-                print(f"📦 Đã nhận message: {data.get('location_name', 'Unknown')} "
+                print(f"[INFO] Da nhan message: {data.get('location_name', 'Unknown')} "
                       f"(Batch: {len(self.batch)}/{self.batch_size})")
                 
                 # Kiểm tra xem có nên flush batch không
                 if self._should_flush_batch():
                     self._flush_batch()
-                    print(f"  → Đã flush batch lên S3\n")
+                    print(f"  -> Da flush batch len S3\n")
 
         except KeyboardInterrupt:
-            print("\n✓ Dừng S3 consumer.")
-            # Flush batch còn lại trước khi dừng
+            print("\n[OK] Dung S3 consumer.")
+            # Flush batch con lai truoc khi dung
             if self.batch:
-                print(f"  → Đang flush batch cuối ({len(self.batch)} messages)...")
+                print(f"  -> Dang flush batch cuoi ({len(self.batch)} messages)...")
                 self._flush_batch()
 
         finally:
@@ -231,15 +231,15 @@ class S3Consumer:
 
     def close(self):
         """
-        Đóng kết nối Consumer
+        Dong ket noi Consumer
         """
-        print("\nĐang đóng S3 Consumer...")
-        # Flush batch cuối cùng
+        print("\nDang dong S3 Consumer...")
+        # Flush batch cuoi cung
         if self.batch:
-            print(f"  → Đang flush batch cuối ({len(self.batch)} messages)...")
+            print(f"  -> Dang flush batch cuoi ({len(self.batch)} messages)...")
             self._flush_batch()
         self.consumer.close()
-        print("✓ S3 Consumer đã đóng.")
+        print("[OK] S3 Consumer da dong.")
 
 
 def main():
@@ -248,7 +248,7 @@ def main():
         consumer = S3Consumer()
         consumer.start_consuming()
     except ValueError as e:
-        print(f"✗ Lỗi cấu hình: {e}")
+        print(f"[ERROR] Loi cau hinh: {e}")
         print("\nVui lòng cấu hình các biến môi trường sau trong file .env:")
         print("  - S3_BUCKET (bắt buộc)")
         print("  - AWS_ACCESS_KEY_ID")

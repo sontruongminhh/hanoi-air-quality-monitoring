@@ -62,10 +62,10 @@ class IQAirProducer:
             max_in_flight_requests_per_connection=1
         )
 
-        print(f" Producer đã kết nối tới Kafka: {self.bootstrap_servers}")
-        print(f" Topic: {self.topic}")
-        print(f" IQAir API: {self.api_url}")
-        print(f" Location: {self.city}, {self.state}, {self.country}")
+        print(f"[OK] Producer da ket noi toi Kafka: {self.bootstrap_servers}")
+        print(f"[OK] Topic: {self.topic}")
+        print(f"[OK] IQAir API: {self.api_url}")
+        print(f"[OK] Location: {self.city}, {self.state}, {self.country}")
 
     def fetch_air_quality_data(self):
         """
@@ -82,32 +82,32 @@ class IQAirProducer:
                 "key": self.api_key,
             }
 
-            print(f" Đang gọi IQAir API...")
+            print(f"[INFO] Dang goi IQAir API...")
             print(f"URL: {self.api_url}")
             print(f"City: {self.city}, State: {self.state}, Country: {self.country}")
             
             response = requests.get(self.api_url, params=params, timeout=10)
             
             if response.status_code != 200:
-                print(f" Status Code: {response.status_code}")
-                print(f" Response: {response.text}")
+                print(f"[ERROR] Status Code: {response.status_code}")
+                print(f"[ERROR] Response: {response.text}")
                 return None
 
             response.raise_for_status()
             data = response.json()
 
             if data.get("status") != "success":
-                print(f" IQAir API error: {data}")
+                print(f"[ERROR] IQAir API error: {data}")
                 return None
 
-            print(f" Đã lấy dữ liệu AQI từ IQAir API")
+            print(f"[OK] Da lay du lieu AQI tu IQAir API")
             return data
 
         except requests.exceptions.RequestException as e:
-            print(f" Lỗi khi gọi IQAir API: {e}")
+            print(f"[ERROR] Loi khi goi IQAir API: {e}")
             return None
         except Exception as e:
-            print(f" Lỗi không xác định: {e}")
+            print(f"[ERROR] Loi khong xac dinh: {e}")
             import traceback
             traceback.print_exc()
             return None
@@ -137,16 +137,16 @@ class IQAirProducer:
                 
                 if measurement_time.tzinfo is None:
                     measurement_time = measurement_time.replace(tzinfo=timezone.utc)
-                print(f"   → Timestamp từ API: {ts} (parsed: {measurement_time.isoformat()})")
-                print(f"   → Thời điểm gọi API: {current_time.isoformat()}")
+                print(f"   -> Timestamp tu API: {ts} (parsed: {measurement_time.isoformat()})")
+                print(f"   -> Thoi diem goi API: {current_time.isoformat()}")
             except:
                 measurement_time = datetime.now(timezone.utc)
-                print(f"   ⚠ Không parse được timestamp từ API, dùng thời điểm hiện tại: {measurement_time.isoformat()}")
+                print(f"   [WARN] Khong parse duoc timestamp tu API, dung thoi diem hien tai: {measurement_time.isoformat()}")
         else:
             # Nếu là Unix timestamp
             measurement_time = datetime.fromtimestamp(ts) if ts else datetime.now()
-            print(f"   → Timestamp từ API (Unix): {ts} (parsed: {measurement_time.isoformat()})")
-            print(f"   → Thời điểm gọi API: {current_time.isoformat()}")
+            print(f"   -> Timestamp tu API (Unix): {ts} (parsed: {measurement_time.isoformat()})")
+            print(f"   -> Thoi diem goi API: {current_time.isoformat()}")
         
         aqi_us = pollution.get("aqius")
         main_us = pollution.get("mainus")  
@@ -188,7 +188,7 @@ class IQAirProducer:
         }
         processed_data['sensors'].append(sensor_data)
         
-        print(f"    Đã xử lý dữ liệu: AQI={aqi_us}, Main pollutant={main_display}")
+        print(f"    [OK] Da xu ly du lieu: AQI={aqi_us}, Main pollutant={main_display}")
         
         return processed_data
     
@@ -215,11 +215,11 @@ class IQAirProducer:
             future = self.producer.send(self.topic, key=key, value=data)
             record_metadata = future.get(timeout=10)
 
-            print(f"✓ Đã gửi: {data.get('location_name', 'Unknown')} - {len(data.get('sensors', []))} sensors")
-            print(f"  → Partition: {record_metadata.partition}, Offset: {record_metadata.offset}")
+            print(f"[OK] Da gui: {data.get('location_name', 'Unknown')} - {len(data.get('sensors', []))} sensors")
+            print(f"  -> Partition: {record_metadata.partition}, Offset: {record_metadata.offset}")
 
         except KafkaError as e:
-            print(f"✗ Lỗi khi gửi message: {e}")
+            print(f"[ERROR] Loi khi gui message: {e}")
 
     def start_streaming(self, interval=60, count=None):
         """
@@ -249,10 +249,10 @@ class IQAirProducer:
                     self.send_message(processed_data, key=key)
 
                     print(f"\n{'='*80}")
-                    print(f"✓ Đã gửi dữ liệu AQI lên Kafka")
+                    print(f"[OK] Da gui du lieu AQI len Kafka")
                     print(f"{'='*80}\n")
                 else:
-                    print(" Không có dữ liệu để gửi")
+                    print("[WARN] Khong co du lieu de gui")
 
                 sent_count += 1
 
@@ -262,23 +262,23 @@ class IQAirProducer:
 
                 
                 if count is None or sent_count < count:
-                    print(f" Chờ {interval} giây trước lần gọi API tiếp theo...")
+                    print(f"[INFO] Cho {interval} giay truoc lan goi API tiep theo...")
                     time.sleep(interval)
 
         except KeyboardInterrupt:
-            print("\n✓ Dừng producer.")
+            print("\n[OK] Dung producer.")
 
         finally:
             self.close()
 
-        print(f"\n✓ Hoàn thành! Đã gửi {sent_count} lần.")
+        print(f"\n[OK] Hoan thanh! Da gui {sent_count} lan.")
 
     def close(self):
-        """Đóng kết nối Producer"""
-        print("\nĐang đóng Producer...")
+        """Dong ket noi Producer"""
+        print("\nDang dong Producer...")
         self.producer.flush()
         self.producer.close()
-        print("✓ Producer đã đóng.")
+        print("[OK] Producer da dong.")
 
 
 def main():
@@ -288,7 +288,7 @@ def main():
 
     
     
-    producer.start_streaming(interval=600, count=None)
+    producer.start_streaming(interval=3600, count=None)
 
 
 if __name__ == '__main__':

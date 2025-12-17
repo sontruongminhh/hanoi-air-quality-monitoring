@@ -283,7 +283,7 @@ def send_aqi_alert_email(
 
             server.sendmail(sender_email, alert_email_to, msg.as_string())
             print(f"Email cảnh báo AQI đã được gửi thành công tới {alert_email_to}")
-            print(f"  → Location: {location_name}, Parameter: {param_name}, Value: {value} {unit}, AQI: {aqi}")
+            print(f"  Location: {location_name}, Parameter: {param_name}, Value: {value} {unit}, AQI: {aqi}")
 
     except Exception as e:
         print(f"Lỗi khi gửi email: {e}")
@@ -530,7 +530,7 @@ def send_aqi_alert_email_summary(
 
             server.sendmail(sender_email, alert_email_to, msg.as_string())
             print(f"Email cảnh báo AQI tổng hợp đã được gửi thành công tới {alert_email_to}")
-            print(f"  → Location: {location_name}, {num_exceeded} thông số vượt ngưỡng, AQI cao nhất: {max_aqi}")
+            print(f"  Location: {location_name}, {num_exceeded} thong so vuot nguong, AQI cao nhat: {max_aqi}")
 
     except Exception as e:
         print(f"Lỗi khi gửi email: {e}")

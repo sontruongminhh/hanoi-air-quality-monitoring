@@ -25,6 +25,10 @@ COPY producer.py .
 COPY consumer.py .
 COPY s3_consumer.py .
 COPY util_email.py .
+COPY copy_openaq_archive_to_s3.py .
+COPY upload_local_files_to_s3.py .
+COPY load_gold_to_postgres.py .
+COPY backfill_all_days.py .
 COPY .env .
 
 # Set environment variables
