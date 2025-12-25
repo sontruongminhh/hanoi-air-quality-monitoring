@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  # Zookeeper - Required for Kafka
+  
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
     hostname: zookeeper
@@ -19,7 +19,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # Kafka Broker
+  
   kafka:
     image: confluentinc/cp-kafka:7.5.0
     hostname: kafka
@@ -62,7 +62,6 @@ services:
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       KAFKA_TOPIC: aqi.hanoi.raw
-      # IQAir API configuration
       IQAIR_API_KEY: ${IQAIR_API_KEY}
       IQAIR_CITY: ${IQAIR_CITY:-Hanoi}
       IQAIR_STATE: ${IQAIR_STATE:-Hanoi}
@@ -86,7 +85,7 @@ services:
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       KAFKA_TOPIC: aqi.hanoi.raw
-      # Postgres connection
+      
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_DB: aqi
@@ -97,22 +96,20 @@ services:
       
       GMAIL_USER: ${GMAIL_USER}
       GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD}
+      
+      # Cấu hình gửi email hàng loạt
+      EMAIL_BATCH_SIZE: ${EMAIL_BATCH_SIZE:-50}
+      EMAIL_DELAY_BETWEEN_BATCHES: ${EMAIL_DELAY_BETWEEN_BATCHES:-300}
      
-      # Giá trị tiêu chuẩn tham khảo (WHO/Vietnam):
-      #   PM2.5: 35-50 (WHO: 15/25, VN QCVN 05:2013: 50)
-      #   PM10: 50-100 (WHO: 45, VN QCVN 05:2013: 100)
-      #   NO2: 25-40 (WHO: 25, VN QCVN 05:2013: 200)
-      #   O3: 100-120 (WHO: 100, VN QCVN 05:2013: 120)
-      #   CO: 4000-10000 (WHO: 4000, VN QCVN 05:2013: 10000)
-      #   SO2: 40-50 (WHO: 40, VN QCVN 05:2013: 350)
-      # Thresholds cho dữ liệu từ OpenAQ (µg/m³)
+      
+      
       THRESHOLD_PM25: 5
       THRESHOLD_PM10: 10
       THRESHOLD_NO2: 5
       THRESHOLD_O3: 20
       THRESHOLD_CO: 500
       THRESHOLD_SO2: 5
-      # Threshold cho AQI từ IQAir (AQI > 150 = "Unhealthy")
+      
       THRESHOLD_AQI: 150
     command: python consumer.py
     networks:
@@ -180,6 +177,9 @@ services:
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_BASIC_ENABLED: "false"
       GF_INSTALL_PLUGINS: grafana-clock-panel,grafana-simple-json-datasource
     volumes:
       - grafana-data:/var/lib/grafana
@@ -189,7 +189,7 @@ services:
       - kafka-network
     restart: unless-stopped
 
-  # Airflow Postgres (cho metadata)
+  
   postgres-airflow:
     image: postgres:15-alpine
     container_name: aqi-postgres-airflow
@@ -207,7 +207,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # Airflow - Init DB
+  
   airflow-init:
     image: apache/airflow:2.8.0
     container_name: aqi-airflow-init
@@ -234,7 +234,7 @@ services:
       - airflow
     restart: "no"
 
-  # Airflow - Scheduler
+  
   airflow-scheduler:
     image: apache/airflow:2.8.0
     container_name: aqi-airflow-scheduler
@@ -274,7 +274,7 @@ services:
       - airflow
     restart: unless-stopped
 
-  # Airflow - Webserver
+  
   airflow-webserver:
     image: apache/airflow:2.8.0
     container_name: aqi-airflow-webserver
@@ -316,7 +316,7 @@ services:
       - airflow
     restart: unless-stopped
 
-  # Service để copy dữ liệu từ OpenAQ archive sang S3
+  
   copy-openaq-archive:
     build:
       context: .
@@ -336,7 +336,7 @@ services:
     command: python copy_openaq_archive_to_s3.py 2024
     restart: "no"
 
-  # Service để upload file CSV.gz từ local lên S3
+
   upload-local-files:
     build:
       context: .
@@ -354,19 +354,17 @@ services:
     profiles:
       - upload-local
     volumes:
-      # Mount thư mục chứa file CSV.gz từ Windows
       - type: bind
         source: C:/Users/HH/Downloads/openaq_4946813_2025_07_12
         target: /data
     command: python upload_local_files_to_s3.py /data
     restart: "no"
 
-  # Service để load Gold data từ S3 vào PostgreSQL
   load-gold-to-postgres:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: load-gold-to-postgres
+    container_name: load-gold-to-postgres 
     env_file:
       - .env
     environment:

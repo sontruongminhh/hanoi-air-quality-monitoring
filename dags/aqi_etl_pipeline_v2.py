@@ -114,36 +114,67 @@ with DAG(
     
     def check_bronze_exists(**context):
         """
-        Task 1: Kiểm tra Bronze có dữ liệu không
-        Returns: True nếu có data, False nếu không
+        Task 1: Kiem tra Bronze co du lieu khong
+        Ho tro 3 cau truc:
+        - Cau truc 1: year/locationid/month/day/
+        - Cau truc 2: year/month/day/locationid/
+        - Cau truc 3: year/locationid/month/ (files truc tiep, khong co day folder)
+        Returns: True neu co data, False neu khong
         """
         import boto3
         
         params = get_execution_params(context)
         s3_client = boto3.client('s3')
         
-        bronze_prefix = f"{BRONZE_PREFIX}/year={params['year']}/month={params['month']}/day={params['day']}/locationid={params['location_id']}/"
+        # Thu cau truc 1: year/locationid/month/day
+        bronze_prefixes = [
+            f"{BRONZE_PREFIX}/year={params['year']}/locationid={params['location_id']}/month={params['month']}/day={params['day']}/",
+            f"{BRONZE_PREFIX}/year={params['year']}/month={params['month']}/day={params['day']}/locationid={params['location_id']}/",
+        ]
         
-        print(f"[INFO] Checking Bronze: s3://{S3_BUCKET}/{bronze_prefix}")
+        for bronze_prefix in bronze_prefixes:
+            print(f"[INFO] Checking Bronze: s3://{S3_BUCKET}/{bronze_prefix}")
+            
+            response = s3_client.list_objects_v2(
+                Bucket=S3_BUCKET,
+                Prefix=bronze_prefix,
+                MaxKeys=1
+            )
+            
+            has_data = 'Contents' in response and len(response['Contents']) > 0
+            
+            if has_data:
+                print(f"[OK] Bronze co du lieu tai: {bronze_prefix}")
+                context['ti'].xcom_push(key='bronze_prefix_found', value=bronze_prefix)
+                context['ti'].xcom_push(key='bronze_structure', value='folder')
+                return 'ingest_bronze'
+        
+        # Thu cau truc 3: Files truc tiep trong month/ (khong co day folder)
+        # VD: location-4946812-20250703.csv.gz
+        month_prefix = f"{BRONZE_PREFIX}/year={params['year']}/locationid={params['location_id']}/month={params['month']}/"
+        date_pattern = f"{params['year']}{params['month']}{params['day']}"
+        
+        print(f"[INFO] Checking Bronze (flat): s3://{S3_BUCKET}/{month_prefix} for date {date_pattern}")
         
         response = s3_client.list_objects_v2(
             Bucket=S3_BUCKET,
-            Prefix=bronze_prefix,
-            MaxKeys=1
+            Prefix=month_prefix
         )
         
-        has_data = 'Contents' in response and len(response['Contents']) > 0
+        for obj in response.get('Contents', []):
+            if date_pattern in obj['Key'] and obj['Key'].endswith('.csv.gz'):
+                print(f"[OK] Bronze co du lieu (flat structure): {obj['Key']}")
+                context['ti'].xcom_push(key='bronze_prefix_found', value=month_prefix)
+                context['ti'].xcom_push(key='bronze_structure', value='flat')
+                context['ti'].xcom_push(key='bronze_file_pattern', value=date_pattern)
+                return 'ingest_bronze'
         
-        if has_data:
-            print(f"[OK] Bronze co du lieu")
-            return 'ingest_bronze'
-        else:
-            print(f"[WARN] Bronze KHONG co du lieu - skip pipeline")
-            return 'skip_no_data'
+        print(f"[WARN] Bronze KHONG co du lieu - skip pipeline")
+        return 'skip_no_data'
     
     def ingest_bronze(**context):
         """
-        Task 2: Đọc tất cả CSV.gz từ Bronze
+        Task 2: Doc tat ca CSV.gz tu Bronze
         Output: List of DataFrames via XCom
         """
         import pandas as pd
@@ -153,10 +184,27 @@ with DAG(
         
         params = get_execution_params(context)
         s3_client = boto3.client('s3')
+        ti = context['ti']
         
-        bronze_prefix = f"{BRONZE_PREFIX}/year={params['year']}/month={params['month']}/day={params['day']}/locationid={params['location_id']}/"
+        # Lay prefix da tim thay tu task truoc
+        bronze_prefix = ti.xcom_pull(task_ids='check_bronze_exists', key='bronze_prefix_found')
+        bronze_structure = ti.xcom_pull(task_ids='check_bronze_exists', key='bronze_structure') or 'folder'
+        file_pattern = ti.xcom_pull(task_ids='check_bronze_exists', key='bronze_file_pattern')
+        
+        if not bronze_prefix:
+            # Fallback: thu ca 2 cau truc
+            bronze_prefixes = [
+                f"{BRONZE_PREFIX}/year={params['year']}/locationid={params['location_id']}/month={params['month']}/day={params['day']}/",
+                f"{BRONZE_PREFIX}/year={params['year']}/month={params['month']}/day={params['day']}/locationid={params['location_id']}/",
+            ]
+            for prefix in bronze_prefixes:
+                response = s3_client.list_objects_v2(Bucket=S3_BUCKET, Prefix=prefix, MaxKeys=1)
+                if 'Contents' in response:
+                    bronze_prefix = prefix
+                    break
         
         print(f"[INFO] Ingesting from: s3://{S3_BUCKET}/{bronze_prefix}")
+        print(f"[INFO] Structure: {bronze_structure}, Pattern: {file_pattern}")
         
         response = s3_client.list_objects_v2(Bucket=S3_BUCKET, Prefix=bronze_prefix)
         
@@ -166,6 +214,11 @@ with DAG(
         for obj in response.get('Contents', []):
             if not obj['Key'].endswith('.csv.gz'):
                 continue
+            
+            # Neu la flat structure, chi lay files khop voi date pattern
+            if bronze_structure == 'flat' and file_pattern:
+                if file_pattern not in obj['Key']:
+                    continue
             
             print(f"  Reading: {obj['Key']}")
             file_obj = s3_client.get_object(Bucket=S3_BUCKET, Key=obj['Key'])

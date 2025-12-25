@@ -8,6 +8,7 @@ from email.message import EmailMessage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime, timezone
+import time
 
 
 def calculate_aqi_from_value(value: float, parameter: str) -> tuple[int, str]:
@@ -96,15 +97,107 @@ def send_aqi_alert_email(
     latitude: float = None,
     longitude: float = None,
     measurement_time: datetime = None,
-    main_pollutant: str = None,      
+    main_pollutant: str = None,
+    batch_size: int = None,
+    delay_between_batches: int = None,
 ):
     """
     Gửi email cảnh báo AQI (chỉ số AQI tổng, không dùng các thông số phụ).
+    Hỗ trợ gửi hàng loạt với BCC nếu alert_email_to là danh sách email.
+    
+    Args:
+        batch_size: Số email mỗi batch khi gửi hàng loạt (mặc định: 50)
+        delay_between_batches: Delay giữa các batch (giây, mặc định: 300 = 5 phút)
     """
     
     if not alert_email_to or value is None or not location_name:
         print("Lỗi: Thiếu thông tin bắt buộc để gửi email.")
         return
+    
+    # Parse danh sách email từ string hoặc list
+    if isinstance(alert_email_to, str):
+        # Hỗ trợ cả comma-separated và newline-separated
+        email_list = [e.strip() for e in alert_email_to.replace('\n', ',').split(',') if e.strip()]
+    elif isinstance(alert_email_to, list):
+        email_list = [e.strip() for e in alert_email_to if e.strip()]
+    else:
+        email_list = [str(alert_email_to).strip()]
+    
+    if not email_list:
+        print("Lỗi: Không có email hợp lệ để gửi.")
+        return
+    
+    # Nếu chỉ có 1 email, gửi bình thường
+    if len(email_list) == 1:
+        _send_single_email(
+            smtp_host=smtp_host,
+            smtp_port=smtp_port,
+            smtp_user=smtp_user,
+            smtp_password=smtp_password,
+            alert_email_from=alert_email_from,
+            alert_email_to=email_list[0],
+            subject=subject,
+            param_name=param_name,
+            value=value,
+            unit=unit,
+            threshold=threshold,
+            location_name=location_name,
+            locality=locality,
+            country=country,
+            latitude=latitude,
+            longitude=longitude,
+            measurement_time=measurement_time,
+            main_pollutant=main_pollutant
+        )
+    else:
+        # Gửi hàng loạt với BCC
+        _send_batch_emails(
+            smtp_host=smtp_host,
+            smtp_port=smtp_port,
+            smtp_user=smtp_user,
+            smtp_password=smtp_password,
+            alert_email_from=alert_email_from,
+            email_list=email_list,
+            subject=subject,
+            param_name=param_name,
+            value=value,
+            unit=unit,
+            threshold=threshold,
+            location_name=location_name,
+            locality=locality,
+            country=country,
+            latitude=latitude,
+            longitude=longitude,
+            measurement_time=measurement_time,
+            main_pollutant=main_pollutant,
+            batch_size=batch_size,
+            delay_between_batches=delay_between_batches
+        )
+
+
+def _send_single_email(
+    smtp_host=None,
+    smtp_port=None,
+    smtp_user=None,
+    smtp_password=None,
+    alert_email_from=None,
+    alert_email_to=None,
+    subject=None,
+    param_name: str = None,          
+    value: float = None,            
+    unit: str = None,                
+    threshold: float = None,         
+    location_name: str = None,
+    locality: str = None,
+    country: str = None,
+    latitude: float = None,
+    longitude: float = None,
+    measurement_time: datetime = None,
+    main_pollutant: str = None,      
+):
+    """
+    Gửi email đơn lẻ (hàm helper).
+    """
 
    
     sender_email = alert_email_from or smtp_user or os.environ.get("GMAIL_USER")
@@ -287,6 +380,246 @@ def send_aqi_alert_email(
 
     except Exception as e:
         print(f"Lỗi khi gửi email: {e}")
+
+
+def _send_batch_emails(
+    smtp_host=None,
+    smtp_port=None,
+    smtp_user=None,
+    smtp_password=None,
+    alert_email_from=None,
+    email_list: list = None,
+    subject=None,
+    param_name: str = None,          
+    value: float = None,            
+    unit: str = None,                
+    threshold: float = None,         
+    location_name: str = None,
+    locality: str = None,
+    country: str = None,
+    latitude: float = None,
+    longitude: float = None,
+    measurement_time: datetime = None,
+    main_pollutant: str = None,
+    batch_size: int = None,
+    delay_between_batches: int = None,
+):
+    """
+    Gửi email hàng loạt với BCC theo batch.
+    
+    Args:
+        email_list: Danh sách email cần gửi
+        batch_size: Số email mỗi batch (mặc định: 50)
+        delay_between_batches: Delay giữa các batch (giây, mặc định: 300 = 5 phút)
+    """
+    
+    # Lấy cấu hình từ env nếu không truyền vào
+    batch_size = batch_size or int(os.environ.get('EMAIL_BATCH_SIZE', '50'))
+    delay_between_batches = delay_between_batches or int(os.environ.get('EMAIL_DELAY_BETWEEN_BATCHES', '300'))
+    
+    sender_email = alert_email_from or smtp_user or os.environ.get("GMAIL_USER")
+    app_password = smtp_password or os.environ.get("GMAIL_APP_PASSWORD")
+    
+    host = smtp_host or os.environ.get("SMTP_HOST") or "smtp.gmail.com"
+    port = int(smtp_port or os.environ.get("SMTP_PORT") or 465)
+    
+    if not sender_email or not app_password:
+        print("Lỗi: Thiếu SMTP user/app password (GMAIL_USER / GMAIL_APP_PASSWORD hoặc SMTP_USER / SMTP_PASSWORD).")
+        return
+    
+    # Tính toán AQI level
+    aqi = float(value)
+    if aqi <= 50:
+        aqi_level = 'Tốt'
+    elif aqi <= 100:
+        aqi_level = 'Trung bình'
+    elif aqi <= 150:
+        aqi_level = 'Kém (Unhealthy for Sensitive Groups)'
+    elif aqi <= 200:
+        aqi_level = 'Xấu (Unhealthy)'
+    elif aqi <= 300:
+        aqi_level = 'Rất xấu (Very Unhealthy)'
+    else:
+        aqi_level = 'Nguy hiểm (Hazardous)'
+    
+    # Format measurement time
+    if measurement_time:
+        if isinstance(measurement_time, datetime):
+            if measurement_time.tzinfo is None:
+                measurement_time = measurement_time.replace(tzinfo=timezone.utc)
+            measured_at_str = measurement_time.strftime("%Y-%m-%d %H:%M:%S UTC")
+        else:
+            measured_at_str = str(measurement_time)
+    else:
+        measured_at_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    
+    # Tạo subject
+    main_text = f" - Chất ô nhiễm chính: {main_pollutant}" if main_pollutant else ""
+    if not subject:
+        subject = f"[CẢNH BÁO AQI] {location_name} vượt ngưỡng (AQI={aqi}{main_text})"
+    
+    # Tạo HTML content (giống như hàm _send_single_email)
+    html_content = f"""<html>
+<head>
+    <style>
+        .container {{
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            width: 90%;
+            max-width: 500px;
+            margin: 20px auto;
+            background-color: #f9f9f9;
+        }}
+        .header {{
+            font-size: 24px;
+            font-weight: bold;
+            color: #c0392b;
+            text-align: center;
+        }}
+        .aqi-value {{
+            font-size: 32px;
+            font-weight: bold;
+            color: #e74c3c;
+            text-align: center;
+            margin: 20px 0;
+            letter-spacing: 2px;
+        }}
+        .sub-header {{
+            font-size: 16px;
+            font-weight: bold;
+            text-align: center;
+            margin-bottom: 10px;
+        }}
+        .detail {{
+            font-size: 14px;
+            color: #333;
+        }}
+        .badge-level {{
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            background-color: #f39c12;
+            color: #fff;
+        }}
+        .footer {{
+            font-size: 12px;
+            color: #888;
+            text-align: center;
+            margin-top: 20px;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">CẢNH BÁO CHẤT LƯỢNG KHÔNG KHÍ</div>
+        <p class="detail">
+            Hệ thống giám sát phát hiện <b>chỉ số ô nhiễm chính: {main_pollutant if main_pollutant else 'N/A'}</b> tại khu vực
+            <b>{location_name}</b> đã <b>vượt ngưỡng an toàn</b>.
+        </p>
+
+        <div class="sub-header">Chỉ số AQI hiện tại</div>
+        <div class="aqi-value">{aqi}</div>
+        <p style="text-align: center;">
+            Mức độ: <span class="badge-level">{aqi_level}</span>
+        </p>
+
+        <p class="detail">
+            <b>Thông tin chi tiết:</b><br>
+            - AQI: <b>{aqi}</b> (ngưỡng: {threshold or 'N/A'})<br>
+            {f"- Chất ô nhiễm chính: <b>{main_pollutant}</b><br>" if main_pollutant else ""}
+            - Thời điểm đo: <b>{measured_at_str}</b>
+        </p>
+
+        <p class="detail">
+            <b>Khuyến nghị:</b><br>
+            - Hạn chế các hoạt động ngoài trời kéo dài, đặc biệt với người già, trẻ nhỏ và người có bệnh hô hấp.<br>
+            - Đeo khẩu trang phù hợp khi ra ngoài.<br>
+            - Đóng cửa sổ, sử dụng máy lọc không khí nếu có điều kiện.
+        </p>
+
+        <p class="detail">
+            Hệ thống sẽ tiếp tục theo dõi và gửi email khi chất lượng không khí cải thiện
+            hoặc có biến động bất thường.
+        </p>
+
+        <div class="footer">
+            © 2025 Hệ thống giám sát &amp; cảnh báo chất lượng không khí Hà Nội
+        </div>
+    </div>
+</body>
+</html>"""
+    
+    location_info = f"{location_name}"
+    if locality:
+        location_info += f", {locality}"
+    if country:
+        location_info += f", {country}"
+    
+    text_content = (
+        f"CẢNH BÁO AQI tại {location_info}: AQI={aqi}, mức {aqi_level}. "
+        f"Giá trị {param_name} = {value} {unit or ''}, vượt ngưỡng {threshold} {unit or ''}. "
+        f"Thời điểm đo: {measured_at_str}"
+    )
+    
+    # Chia email thành các batch
+    total_emails = len(email_list)
+    total_batches = (total_emails + batch_size - 1) // batch_size  # Làm tròn lên
+    
+    print(f"[BATCH EMAIL] Bắt đầu gửi {total_emails} email trong {total_batches} batch (mỗi batch {batch_size} email)")
+    print(f"[BATCH EMAIL] Delay giữa các batch: {delay_between_batches} giây")
+    
+    context = ssl.create_default_context()
+    
+    try:
+        with smtplib.SMTP_SSL(host, port, context=context) as server:
+            server.login(sender_email, app_password)
+            print(f"[BATCH EMAIL] Đăng nhập SMTP thành công!")
+            
+            # Gửi từng batch
+            for batch_num in range(total_batches):
+                start_idx = batch_num * batch_size
+                end_idx = min(start_idx + batch_size, total_emails)
+                batch_emails = email_list[start_idx:end_idx]
+                
+                # Tạo message cho batch này
+                msg = MIMEMultipart('alternative')
+                msg["Subject"] = subject
+                msg["From"] = sender_email
+                # Dùng BCC để ẩn danh sách email
+                msg["Bcc"] = ", ".join(batch_emails)
+                
+                # Attach text và HTML
+                text_part = MIMEText(text_content, 'plain', 'utf-8')
+                msg.attach(text_part)
+                html_part = MIMEText(html_content, 'html', 'utf-8')
+                msg.attach(html_part)
+                
+                # Gửi batch
+                try:
+                    # Gửi đến chính sender (BCC sẽ tự động gửi đến các email trong BCC)
+                    server.sendmail(sender_email, batch_emails, msg.as_string())
+                    print(f"[BATCH EMAIL] Batch {batch_num + 1}/{total_batches}: Đã gửi thành công đến {len(batch_emails)} email")
+                except Exception as batch_error:
+                    print(f"[BATCH EMAIL] Batch {batch_num + 1}/{total_batches}: Lỗi khi gửi - {batch_error}")
+                    # Tiếp tục gửi batch tiếp theo
+                
+                # Delay trước khi gửi batch tiếp theo (trừ batch cuối)
+                if batch_num < total_batches - 1:
+                    print(f"[BATCH EMAIL] Đợi {delay_between_batches} giây trước khi gửi batch tiếp theo...")
+                    time.sleep(delay_between_batches)
+            
+            print(f"[BATCH EMAIL] Hoàn thành! Đã gửi {total_emails} email trong {total_batches} batch")
+            print(f"  Location: {location_name}, Parameter: {param_name}, Value: {value} {unit}, AQI: {aqi}")
+            
+    except Exception as e:
+        print(f"[BATCH EMAIL] Lỗi khi kết nối/gửi email: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 def send_aqi_alert_email_summary(
@@ -510,7 +843,7 @@ def send_aqi_alert_email_summary(
         f"Thời điểm đo: {measured_at_str}"
     )
     
-    # Tạo text part
+
     text_part = MIMEText(text_content, 'plain', 'utf-8')
     msg.attach(text_part)
     

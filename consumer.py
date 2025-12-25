@@ -11,6 +11,7 @@ import psycopg2
 from kafka import KafkaConsumer
 from dotenv import load_dotenv
 from util_email import send_aqi_alert_email
+import pandas as pd
 
 
 load_dotenv()
@@ -52,8 +53,52 @@ class AirQualityConsumer:
         self.smtp_port = int(os.getenv('SMTP_PORT', '587'))
         self.smtp_user = os.getenv('SMTP_USER')
         self.smtp_password = os.getenv('SMTP_PASSWORD')
-        self.alert_email_to = os.getenv('ALERT_EMAIL_TO')
+        
+        # Đọc danh sách email - hỗ trợ cả file (Excel, CSV, TXT) và string
+        alert_email_to_raw = os.getenv('ALERT_EMAIL_TO')
+        if alert_email_to_raw:
+            # Loại bỏ dấu ngoặc kép nếu có
+            alert_email_to_raw = alert_email_to_raw.strip('"\'')
+            
+            # Nếu là đường dẫn file (Windows path hoặc Unix path)
+            is_file = (
+                alert_email_to_raw.startswith('./') or 
+                alert_email_to_raw.startswith('/') or 
+                alert_email_to_raw.startswith('E:\\') or  # Windows drive
+                alert_email_to_raw.startswith('C:\\') or
+                alert_email_to_raw.startswith('D:\\') or
+                '\\' in alert_email_to_raw or  # Windows path separator
+                alert_email_to_raw.endswith('.txt') or 
+                alert_email_to_raw.endswith('.csv') or
+                alert_email_to_raw.endswith('.xlsx') or
+                alert_email_to_raw.endswith('.xls') or
+                os.path.isfile(alert_email_to_raw)  # Kiểm tra file có tồn tại không
+            )
+            
+            if is_file:
+                # Đọc từ file
+                try:
+                    self.alert_email_to = self._read_emails_from_file(alert_email_to_raw)
+                    print(f"[OK] Đã đọc danh sách email từ file: {alert_email_to_raw}")
+                except FileNotFoundError:
+                    print(f"[WARN] Không tìm thấy file: {alert_email_to_raw}, sử dụng giá trị trực tiếp")
+                    self.alert_email_to = alert_email_to_raw
+                except Exception as e:
+                    print(f"[ERROR] Lỗi khi đọc file email: {e}, sử dụng giá trị trực tiếp")
+                    import traceback
+                    traceback.print_exc()
+                    self.alert_email_to = alert_email_to_raw
+            else:
+                # Là string trực tiếp (comma-separated hoặc newline-separated)
+                self.alert_email_to = alert_email_to_raw
+        else:
+            self.alert_email_to = None
+            
         self.alert_email_from = os.getenv('ALERT_EMAIL_FROM', 'alerts@example.com')
+        
+        # Cấu hình batch email
+        self.email_batch_size = int(os.getenv('EMAIL_BATCH_SIZE', '50'))
+        self.email_delay_between_batches = int(os.getenv('EMAIL_DELAY_BETWEEN_BATCHES', '300'))
 
       
         self.aqi_threshold = float(os.getenv('THRESHOLD_AQI', '150'))
@@ -61,6 +106,110 @@ class AirQualityConsumer:
         self.pg_conn = self._init_pg()
         print("[OK] Ket noi Postgres thanh cong")
 
+    def _read_emails_from_file(self, file_path: str) -> str:
+        """
+        Đọc danh sách email từ file (hỗ trợ Excel, CSV, TXT)
+        
+        Args:
+            file_path: Đường dẫn đến file
+            
+        Returns:
+            str: Danh sách email (comma-separated)
+        """
+        file_ext = os.path.splitext(file_path)[1].lower()
+        
+        if file_ext in ['.xlsx', '.xls']:
+            # Đọc từ Excel
+            try:
+                # Đọc Excel - thử các sheet đầu tiên
+                df = pd.read_excel(file_path, sheet_name=0)
+                
+                # Tìm cột chứa email (có thể tên là 'email', 'Email', 'EMAIL', 'e-mail', etc.)
+                email_column = None
+                for col in df.columns:
+                    col_lower = str(col).lower()
+                    if 'email' in col_lower or 'mail' in col_lower or 'e-mail' in col_lower:
+                        email_column = col
+                        break
+                
+                # Nếu không tìm thấy, dùng cột đầu tiên
+                if email_column is None:
+                    email_column = df.columns[0]
+                    print(f"[INFO] Không tìm thấy cột email, sử dụng cột đầu tiên: {email_column}")
+                
+                # Extract email từ cột
+                emails = df[email_column].dropna().astype(str).tolist()
+                
+                # Loại bỏ email không hợp lệ và trùng lặp
+                valid_emails = []
+                for email in emails:
+                    email = email.strip()
+                    if email and '@' in email and '.' in email.split('@')[1]:
+                        if email not in valid_emails:
+                            valid_emails.append(email)
+                
+                print(f"[INFO] Đã đọc {len(valid_emails)} email từ Excel (cột: {email_column})")
+                
+                # Trả về comma-separated string
+                return ','.join(valid_emails)
+                
+            except Exception as e:
+                print(f"[ERROR] Lỗi khi đọc Excel: {e}")
+                raise
+        
+        elif file_ext == '.csv':
+            # Đọc từ CSV
+            try:
+                df = pd.read_csv(file_path)
+                
+                # Tìm cột chứa email
+                email_column = None
+                for col in df.columns:
+                    col_lower = str(col).lower()
+                    if 'email' in col_lower or 'mail' in col_lower or 'e-mail' in col_lower:
+                        email_column = col
+                        break
+                
+                if email_column is None:
+                    email_column = df.columns[0]
+                    print(f"[INFO] Không tìm thấy cột email, sử dụng cột đầu tiên: {email_column}")
+                
+                emails = df[email_column].dropna().astype(str).tolist()
+                valid_emails = []
+                for email in emails:
+                    email = email.strip()
+                    if email and '@' in email and '.' in email.split('@')[1]:
+                        if email not in valid_emails:
+                            valid_emails.append(email)
+                
+                print(f"[INFO] Đã đọc {len(valid_emails)} email từ CSV (cột: {email_column})")
+                return ','.join(valid_emails)
+                
+            except Exception as e:
+                print(f"[ERROR] Lỗi khi đọc CSV: {e}")
+                raise
+        
+        else:
+            # Đọc từ TXT (plain text)
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Parse email từ text
+            email_list = []
+            for line in content.split('\n'):
+                line = line.strip()
+                # Bỏ qua comment và dòng trống
+                if line and not line.startswith('#'):
+                    # Hỗ trợ cả comma-separated trên cùng một dòng
+                    for email in line.split(','):
+                        email = email.strip()
+                        if email and '@' in email and '.' in email.split('@')[1]:
+                            if email not in email_list:
+                                email_list.append(email)
+            
+            print(f"[INFO] Đã đọc {len(email_list)} email từ file text")
+            return ','.join(email_list)
+    
     def _init_pg(self):
         retries = 30
         delay = 2
@@ -156,7 +305,7 @@ class AirQualityConsumer:
             return True, False, None
         
         value_float = float(value)
-        threshold_standard = self.aqi_threshold  # 150 (ngưỡng tiêu chuẩn)
+        threshold_standard = self.aqi_threshold  
         
       
         current_time = datetime.now(timezone.utc)
@@ -177,16 +326,16 @@ class AirQualityConsumer:
         
         should_alert = False
         
-        # Chỉ cảnh báo trong 2 khung giờ: 7h-8h và 17h-18h (UTC+7)
+        
         if is_alert_hour:
             if value_float > threshold_standard:
-                # Xác định khung giờ địa phương (7-8h hoặc 17-18h)
+                
                 if 7 <= current_hour_local < 8:
                     hour_start_local, hour_end_local = 7, 8
-                else:  # 17 <= current_hour_local < 18
+                else:  
                     hour_start_local, hour_end_local = 17, 18
                 
-                # Kiểm tra xem đã gửi cảnh báo trong khung giờ này (cùng ngày) chưa
+                
                 cursor.execute(
                     """
                     SELECT COUNT(*) 
@@ -203,14 +352,14 @@ class AirQualityConsumer:
                 alert_count = cursor.fetchone()[0]
                 
                 if alert_count == 0:
-                    # Chua co canh bao nao trong khung gio nay -> gui canh bao
+                    
                     should_alert = True
                     print(f"  [ALERT] KHUNG GIO CANH BAO ({hour_start_local}h-{hour_end_local}h, gio dia phuong): AQI={value_float} > {threshold_standard} - CANH BAO LAN DAU TRONG KHUNG GIO")
                 else:
-                    # Da canh bao trong khung gio nay roi -> khong gui nua
+                    
                     print(f"  AQI={value_float} > {threshold_standard} nhung da canh bao trong khung gio {hour_start_local}h-{hour_end_local}h (gio dia phuong) hom nay roi (tranh spam)")
         else:
-            # Ngoai khung gio: khong canh bao
+            
             print(f"  Ngoai khung gio canh bao: khong gui canh bao (AQI={value_float})")
         
         return True, should_alert, None
@@ -247,6 +396,7 @@ class AirQualityConsumer:
                      main_pollutant: str = None):
         """
         Gửi email cảnh báo - wrapper gọi hàm từ util_email.py
+        Hỗ trợ gửi hàng loạt nếu ALERT_EMAIL_TO là danh sách email (comma-separated hoặc newline-separated)
         """
         send_aqi_alert_email(
             smtp_host=self.smtp_host,
@@ -266,7 +416,9 @@ class AirQualityConsumer:
             latitude=latitude,
             longitude=longitude,
             measurement_time=measurement_time,
-            main_pollutant=main_pollutant
+            main_pollutant=main_pollutant,
+            batch_size=self.email_batch_size,
+            delay_between_batches=self.email_delay_between_batches
         )
 
     def format_sensor_data(self, sensors):

@@ -17,7 +17,7 @@ S3_BUCKET = os.getenv('S3_BUCKET', 'aqi-hanoi-bronze')
 GOLD_PREFIX = 'gold/openaq/marts'
 
 POSTGRES_CONFIG = {
-    'host': os.getenv('POSTGRES_HOST', 'postgres'),
+    'host': os.getenv('POSTGRES_HOST', 'localhost'),  # Default to localhost for local execution
     'port': int(os.getenv('POSTGRES_PORT', 5432)),
     'database': os.getenv('POSTGRES_DB', 'aqi'),
     'user': os.getenv('POSTGRES_USER', 'aqi_user'),
